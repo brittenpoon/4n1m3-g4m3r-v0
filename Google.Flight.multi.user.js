@@ -33,14 +33,14 @@
 
     // Airports / Destinations
     origin: 'YYZ',
-    destinations: ['HKG', 'ICN', 'TYO'], // change TYO to HND or NRT if you prefer
+    destinations: ['HKG', 'ICN', 'TYO', 'CJU'], // change TYO to HND or NRT if you prefer
 
     // Cabin selection
     // Use: ['econ','pe','biz','first'] or 'all'
     cabins: 'all',
 
     // Pax
-    passengers: 1, // automation tries to keep as is; not force-changing pax right now
+    passengers: 2, // automation tries to keep as is; not force-changing pax right now
 
     // === Scheduling / Stability ===
     debounceMs: 800,
