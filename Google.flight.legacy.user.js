@@ -969,5 +969,3 @@
   boot().catch(err);
 
 })();
-
-let and more function to this script
