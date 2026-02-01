@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Flights Helper - All-in-One + Hamburger Minimize
 // @namespace    google.flights.helper
-// @version      2.0.0
-// @description  Cheapest tab + grouped history + auto remove US connecting airports on signature change + auto-next-day until stop date + hamburger minimize/restore. Trusted Types safe.
+// @version      2.1.0
+// @description  Cheapest tab + grouped history + auto remove US connecting airports on signature change + auto-next-day until stop date + hamburger minimize/restore + Pause/Resume + Clear history. Trusted Types safe.
 // @match        https://www.google.com/travel/flights/*
 // @match        https://www.google.ca/travel/flights/*
 // @include      https://www.google.*/travel/flights/*
@@ -48,6 +48,9 @@
     prefAutoNextDayKey: 'gf_pref_auto_next_day_v2',
     prefStopDateKey: 'gf_pref_stop_date_iso_v2',
     prefMinimizedKey: 'gf_pref_panel_minimized_v1',
+
+    // NEW (A): Pause/resume automation (poll/mutation auto-run)
+    prefPausedKey: 'gf_pref_paused_v1',
 
     defaultDaysForward: 30,
 
@@ -175,7 +178,12 @@
     autoUS: 'gf-helper-autous',
     autoNext: 'gf-helper-autonext',
     stopDate: 'gf-helper-stopdate',
-    stopLabel: 'gf-helper-stoplabel'
+    stopLabel: 'gf-helper-stoplabel',
+
+    // NEW (A + C)
+    pauseBtn: 'gf-helper-pausebtn',
+    clearSigBtn: 'gf-helper-clearsig',
+    clearAllBtn: 'gf-helper-clearall'
   };
 
   function setText(id, text) {
@@ -214,6 +222,20 @@
     rowBtns.appendChild(btnRun);
     rowBtns.appendChild(btnCsv);
     panel.appendChild(rowBtns);
+
+    // NEW (A) Pause row
+    const rowPause = mk('div', { class: 'row' });
+    const pauseBtn = mk('button', { id: UI.pauseBtn }, 'Pause: OFF');
+    rowPause.appendChild(pauseBtn);
+    panel.appendChild(rowPause);
+
+    // NEW (C) Clear history row
+    const rowClear = mk('div', { class: 'row' });
+    const clearSig = mk('button', { id: UI.clearSigBtn }, 'Clear this route history');
+    const clearAll = mk('button', { id: UI.clearAllBtn }, 'Clear ALL history');
+    rowClear.appendChild(clearSig);
+    rowClear.appendChild(clearAll);
+    panel.appendChild(rowClear);
 
     // Auto-remove US toggle
     const rowUS = mk('div', { class: 'row' });
@@ -360,6 +382,12 @@
     const minPref = await gmGet(CFG.prefMinimizedKey, '0');
     await setMinimized(minPref === '1');
 
+    // NEW (A) Paused state
+    const pausedPref = await gmGet(CFG.prefPausedKey, '0');
+    state.paused = (pausedPref === '1');
+    const pauseBtnEl = document.getElementById(UI.pauseBtn);
+    if (pauseBtnEl) pauseBtnEl.textContent = state.paused ? 'Pause: ON' : 'Pause: OFF';
+
     // Bind events
     minBtn.addEventListener('click', () => setMinimized(true));
 
@@ -381,6 +409,36 @@
 
     btnRun.addEventListener('click', () => runOnce('manual'));
     btnCsv.addEventListener('click', () => downloadCsv().catch(err));
+
+    // NEW (A) Pause toggle (persisted)
+    document.getElementById(UI.pauseBtn)?.addEventListener('click', async () => {
+      state.paused = !state.paused;
+      await gmSet(CFG.prefPausedKey, state.paused ? '1' : '0');
+
+      const btn = document.getElementById(UI.pauseBtn);
+      if (btn) btn.textContent = state.paused ? 'Pause: ON' : 'Pause: OFF';
+
+      setText(UI.status, state.paused ? 'Status: Paused (auto-run disabled)' : 'Status: Resumed');
+    });
+
+    // NEW (C) Clear history: current signature
+    document.getElementById(UI.clearSigBtn)?.addEventListener('click', async () => {
+      const ctx = await computeContext();
+      const store = await loadStore();
+
+      if (store[ctx.signature]) delete store[ctx.signature];
+      await saveStore(store);
+
+      setText(UI.history, 'History: —');
+      setText(UI.status, 'Status: Cleared history for this signature ✓');
+    });
+
+    // NEW (C) Clear history: all
+    document.getElementById(UI.clearAllBtn)?.addEventListener('click', async () => {
+      await saveStore({});
+      setText(UI.history, 'History: —');
+      setText(UI.status, 'Status: Cleared ALL history ✓');
+    });
 
     return true;
   }
@@ -896,7 +954,10 @@
     lastStateKey: '',
     autoAttemptsThisState: 0,
     lastSignatureSeen: '',
-    lastSignatureAppliedForUS: ''
+    lastSignatureAppliedForUS: '',
+
+    // NEW (A)
+    paused: false
   };
 
   function makeStateKey(signature, dateKey) {
@@ -905,6 +966,9 @@
 
   async function schedule(reason) {
     if (!panelExists()) return;
+
+    // NEW (A): stop auto scheduling when paused
+    if (state.paused) return;
 
     const ctx = await computeContext();
     const key = makeStateKey(ctx.signature, ctx.dateKey);
@@ -928,6 +992,13 @@
 
   async function runOnce(reason) {
     if (state.running) return;
+
+    // NEW (A): while paused, ignore auto triggers but still allow manual run
+    if (state.paused && !String(reason || '').startsWith('manual')) {
+      setText(UI.status, 'Status: Paused (auto-run ignored)');
+      return;
+    }
+
     state.running = true;
     try {
       await recordAndMaybeLoop(reason);
@@ -961,7 +1032,9 @@
     setText(UI.ctx, `Context: ${ctx.tripType} | pax=${ctx.pax} | cabin=${ctx.cabin} | ${ctx.pretty} | loc=${ctx.loc} | cur=${ctx.cur}`);
     setText(UI.sig, `Signature (grouped): ${ctx.signature}`);
     setText(UI.history, formatHistoryCompact(store[ctx.signature] || {}));
-    setText(UI.status, 'Status: Ready');
+
+    // Show paused state clearly on boot
+    setText(UI.status, state.paused ? 'Status: Ready (Paused)' : 'Status: Ready');
 
     schedule('boot');
   }
