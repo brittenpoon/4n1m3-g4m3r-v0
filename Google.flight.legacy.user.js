@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Flights Helper - All-in-One + Hamburger Minimize
 // @namespace    google.flights.helper
-// @version      2.0.0
+// @version      2.0.1
 // @description  Cheapest tab + grouped history + auto remove US connecting airports on signature change + auto-next-day until stop date + hamburger minimize/restore. Trusted Types safe.
 // @match        https://www.google.com/travel/flights/*
 // @match        https://www.google.ca/travel/flights/*
