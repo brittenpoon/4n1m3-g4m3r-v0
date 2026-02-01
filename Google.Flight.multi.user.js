@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Google Flights Helper - Multi Route/Class/Date Batch Runner
-// @namespace    google.flights.helper.multirun
-// @version      3.0.0
-// @description  Batch runner for multiple destinations + cabin classes + date range. Records Cheapest tab price per combination. Auto remove US connecting airports (optional). Pause/Resume + Clear history. Trusted Types safe.
+// @name         Google Flights Helper - MultiRun via Seed TFS URLs (Stable)
+// @namespace    google.flights.helper.multirun.seed
+// @version      3.1.0
+// @description  Batch runner across multiple destination/cabin combos using user-provided Google Flights seed URLs (?tfs=...). Iterates dates via Next Day. Records Cheapest tab price per combination. Auto-remove US connecting airports. Pause/Resume + Clear history. Trusted Types safe.
 // @match        https://www.google.com/travel/flights/*
 // @match        https://www.google.ca/travel/flights/*
 // @include      https://www.google.*/travel/flights/*
@@ -20,60 +20,65 @@
    * CONFIG (EDIT ME)
    ********************/
   const CFG = {
-    // === Batch plan ===
-    batchEnabled: true,
-
-    // Date range (inclusive) in YYYY-MM-DD
+    // Date range (inclusive)
     startDateISO: '2026-05-22',
     endDateISO:   '2026-09-30',
-    stepDays: 1,
 
-    // Route
-    tripType: 'oneway', // 'oneway' | 'roundtrip' (roundtrip automation is placeholder)
+    // Trip type label for signatures (URL itself enforces actual trip type)
+    // Use: 'oneway' or 'roundtrip'
+    tripType: 'oneway',
 
-    // Airports / Destinations
-    origin: 'YYZ',
-    destinations: ['HKG', 'ICN', 'TYO', 'CJU'], // change TYO to HND or NRT if you prefer
+    // Cabin labels for signatures (URL itself enforces actual cabin)
+    // Use: 'econ' | 'pe' | 'biz' | 'first'
+    // IMPORTANT: Each seed URL should already be set to the matching cabin.
+    seedSearches: [
+      // ✅ Your provided example seed (YYZ -> HKG, 2026-05-25)
+      {
+        origin: 'YYZ',
+        dest: 'HKG',
+        cabin: 'econ',
+        // This should be a seed URL that starts at or near your startDateISO.
+        url: 'https://www.google.com/travel/flights/search?tfs=CBwQAhojEgoyMDI2LTA1LTI1agcIARIDWVlacgwIAxIIL20vMDdkZmtAAUABSAFwAYIBCwj___________8BmAEC&tfu=EgoIABAAGAAgAigB&hl=en&gl=CA'
+      },
 
-    // Cabin selection
-    // Use: ['econ','pe','biz','first'] or 'all'
-    cabins: 'all',
+      // Add more seeds like these (copy from browser after setting cabin + trip + route):
+      // { origin:'YYZ', dest:'HKG', cabin:'pe',   url:'https://www.google.com/travel/flights/search?tfs=...' },
+      // { origin:'YYZ', dest:'HKG', cabin:'biz',  url:'https://www.google.com/travel/flights/search?tfs=...' },
+      // { origin:'YYZ', dest:'HKG', cabin:'first',url:'https://www.google.com/travel/flights/search?tfs=...' },
+      // { origin:'YYZ', dest:'ICN', cabin:'econ', url:'https://www.google.com/travel/flights/search?tfs=...' },
+      // { origin:'YYZ', dest:'TYO', cabin:'econ', url:'https://www.google.com/travel/flights/search?tfs=...' },
+    ],
 
-    // Pax
-    passengers: 2, // automation tries to keep as is; not force-changing pax right now
-
-    // === Scheduling / Stability ===
+    // scheduling
     debounceMs: 800,
     pollIntervalMs: 2500,
     ensurePanelEveryMs: 2000,
 
-    // === Storage ===
-    // Store is keyed by signature; signature includes origin/destination/cabin/tripType
-    storeKey: 'gf_store_multirun_signature_v1',
-    historyLines: 50,
+    // storage
+    storeKey: 'gf_store_multirun_seed_v1',
+    progressKey: 'gf_multirun_seed_progress_v1',
+    historyLines: 60,
 
-    // === Throttles (avoid freeze) ===
+    // throttles
     cheapestClickCooldownMs: 5000,
     connDialogCooldownMs: 7000,
     nextDayClickCooldownMs: 1200,
-    maxAutoAttemptsPerState: 2,
-    maxLoopSteps: 9999,
+    maxAutoAttemptsPerState: 3,
+    maxLoopSteps: 200,
 
-    // === Waits ===
+    // waits
     waitReadyTimeoutMs: 90000,
     waitReadyIntervalMs: 250,
     connOpenTimeoutMs: 12000,
     connCloseTimeoutMs: 8000,
-    dateChangeTimeoutMs: 90000,
-    airportSetTimeoutMs: 15000,
-    comboboxSelectTimeoutMs: 10000,
+    nextDayChangeTimeoutMs: 90000,
 
-    // === Preferences ===
+    // preference keys
     prefAutoRemoveUSKey: 'gf_pref_auto_remove_us_connections_v1',
     prefPausedKey: 'gf_pref_paused_v1',
     prefMinimizedKey: 'gf_pref_panel_minimized_v1',
 
-    // === USA airports to uncheck (edit as needed) ===
+    // USA airports to uncheck
     usaIata: new Set([
       "ATL","BOS","BWI","CLT","ORD","DFW","DEN","DTW","EWR",
       "IAD","JFK","LAX","LGA","MIA","MSP","PDX","PHL","PHX",
@@ -82,10 +87,7 @@
     ])
   };
 
-  /********************
-   * LOGGING
-   ********************/
-  const LOG = '[GF MultiRun]';
+  const LOG = '[GF SeedMultiRun]';
   const log = (...a) => console.log(LOG, ...a);
   const warn = (...a) => console.warn(LOG, ...a);
   const err = (...a) => console.error(LOG, ...a);
@@ -156,21 +158,6 @@
     }
   }
 
-  function typeInto(el, text) {
-    if (!el) return false;
-    try {
-      el.focus();
-      // clear
-      el.value = '';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      // set
-      el.value = text;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    } catch (e) { return false; }
-  }
-
   function dateToISO(d) {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -184,15 +171,7 @@
     return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   }
 
-  function addDaysISO(iso, days) {
-    const d = isoToDate(iso);
-    if (!d) return null;
-    d.setDate(d.getDate() + days);
-    return dateToISO(d);
-  }
-
   function cmpISO(a, b) {
-    // ISO date string compare works lexicographically
     if (a === b) return 0;
     return a < b ? -1 : 1;
   }
@@ -201,21 +180,22 @@
    * UI
    ********************/
   const UI = {
-    panelId: 'gf-multirun-panel',
-    miniBox: 'gf-multirun-minibox',
-    minBtn: 'gf-multirun-minbtn',
+    panelId: 'gf-seed-panel',
+    miniBox: 'gf-seed-minibox',
+    minBtn: 'gf-seed-minbtn',
 
-    status: 'gf-multirun-status',
-    debug: 'gf-multirun-debug',
-    plan:  'gf-multirun-plan',
-    sig:   'gf-multirun-sig',
-    cheapest: 'gf-multirun-cheapest',
-    history: 'gf-multirun-history',
+    status: 'gf-seed-status',
+    debug: 'gf-seed-debug',
+    plan:  'gf-seed-plan',
+    sig:   'gf-seed-sig',
+    cheapest: 'gf-seed-cheapest',
+    history: 'gf-seed-history',
 
-    pauseBtn: 'gf-multirun-pausebtn',
-    runBtn: 'gf-multirun-runbtn',
-    clearSigBtn: 'gf-multirun-clearsig',
-    clearAllBtn: 'gf-multirun-clearall'
+    pauseBtn: 'gf-seed-pausebtn',
+    runBtn: 'gf-seed-runbtn',
+    clearSigBtn: 'gf-seed-clearsig',
+    clearAllBtn: 'gf-seed-clearall',
+    resetProgBtn: 'gf-seed-resetprog'
   };
 
   function setText(id, text) {
@@ -240,17 +220,22 @@
     const panel = mk('div', { id: UI.panelId });
     panel.style.position = 'fixed';
 
-    panel.appendChild(mk('div', { class: 'title' }, 'GF Multi-Run Batch Helper'));
+    panel.appendChild(mk('div', { class: 'title' }, 'GF Multi-Run (Seed URL Mode)'));
 
     const minBtn = mk('button', { id: UI.minBtn, class: 'mini-btn', title: 'Minimize' }, '—');
     panel.appendChild(minBtn);
 
     const rowBtns = mk('div', { class: 'row' });
-    const btnRun = mk('button', { id: UI.runBtn }, 'Run batch now');
+    const btnRun = mk('button', { id: UI.runBtn }, 'Run / Continue');
     const btnPause = mk('button', { id: UI.pauseBtn }, 'Pause: OFF');
     rowBtns.appendChild(btnRun);
     rowBtns.appendChild(btnPause);
     panel.appendChild(rowBtns);
+
+    const rowBtns2 = mk('div', { class: 'row' });
+    const btnResetProg = mk('button', { id: UI.resetProgBtn }, 'Reset progress (start over)');
+    rowBtns2.appendChild(btnResetProg);
+    panel.appendChild(rowBtns2);
 
     const rowClear = mk('div', { class: 'row' });
     const clearSig = mk('button', { id: UI.clearSigBtn }, 'Clear current combo history');
@@ -281,7 +266,7 @@
     GM_addStyle(`
       #${UI.panelId}{
         right: 16px; bottom: 16px;
-        width: 640px; z-index: 2147483647;
+        width: 720px; z-index: 2147483647;
         background: rgba(20,20,22,.92); color:#fff;
         border:1px solid rgba(255,255,255,.15);
         border-radius:12px; padding:10px 12px;
@@ -296,7 +281,7 @@
         border:1px solid rgba(255,255,255,.2);
         background:rgba(255,255,255,.10);
         color:#fff; padding:8px 10px; border-radius:10px;
-        min-width:220px;
+        min-width:240px;
       }
       #${UI.panelId} button:hover{background:rgba(255,255,255,.18);}
       #${UI.panelId} .line{font-size:12px;opacity:.95;}
@@ -305,7 +290,7 @@
         margin:0;padding:8px;border-radius:10px;
         background:rgba(255,255,255,.06);
         border:1px solid rgba(255,255,255,.10);
-        max-height:360px;overflow:auto;
+        max-height:380px;overflow:auto;
         white-space:pre-wrap;font-size:12px;line-height:1.35;
       }
       #${UI.minBtn}{
@@ -342,7 +327,7 @@
         justify-content: center;
         cursor: pointer;
         user-select: none;
-        box-shadow: 0 12px 30px rgba(0,0,0,.35);
+        box-shadow:0 12px 30px rgba(0,0,0,.35);
       }
       #${UI.miniBox}:hover{ background: rgba(255,255,255,.18); }
     `);
@@ -354,7 +339,6 @@
     // Paused state
     const pausedPref = await gmGet(CFG.prefPausedKey, '0');
     state.paused = (pausedPref === '1');
-    setText(UI.status, state.paused ? 'Status: Ready (Paused)' : 'Status: Ready');
     const pbtn = document.getElementById(UI.pauseBtn);
     if (pbtn) pbtn.textContent = state.paused ? 'Pause: ON' : 'Pause: OFF';
 
@@ -362,12 +346,19 @@
     minBtn.addEventListener('click', () => setMinimized(true));
 
     document.getElementById(UI.runBtn)?.addEventListener('click', () => runOnce('manual'));
+
     document.getElementById(UI.pauseBtn)?.addEventListener('click', async () => {
       state.paused = !state.paused;
       await gmSet(CFG.prefPausedKey, state.paused ? '1' : '0');
       const btn = document.getElementById(UI.pauseBtn);
       if (btn) btn.textContent = state.paused ? 'Pause: ON' : 'Pause: OFF';
       setText(UI.status, state.paused ? 'Status: Paused (auto-run disabled)' : 'Status: Resumed');
+    });
+
+    document.getElementById(UI.resetProgBtn)?.addEventListener('click', async () => {
+      await gmSet(CFG.progressKey, JSON.stringify({ seedIndex: 0 }));
+      setText(UI.status, 'Status: Progress reset ✓ (press Run / Continue)');
+      // Don’t auto-navigate immediately; user clicks run.
     });
 
     document.getElementById(UI.clearSigBtn)?.addEventListener('click', async () => {
@@ -402,152 +393,7 @@
   }
 
   /********************
-   * GOOGLE FLIGHTS UI: Find/Select controls
-   ********************/
-  function findComboboxByLabel(labelRe) {
-    const combos = qsa('[role="combobox"]');
-    for (const cb of combos) {
-      const labelled = cb.getAttribute('aria-labelledby') || '';
-      if (!labelled) continue;
-      for (const id of labelled.split(/\s+/).filter(Boolean)) {
-        const labelEl = document.getElementById(id);
-        const aria = labelEl ? (labelEl.getAttribute('aria-label') || '') : '';
-        if (labelRe.test(aria)) return cb;
-      }
-    }
-    return null;
-  }
-
-  async function selectFromCombobox(labelRe, optionTextRe) {
-    const cb = findComboboxByLabel(labelRe);
-    if (!cb) return { ok: false, reason: 'combobox not found' };
-
-    clickReal(cb);
-
-    const opened = await waitFor(() => qsa('[role="option"]').length > 0, CFG.comboboxSelectTimeoutMs, 200);
-    if (!opened) return { ok: false, reason: 'options did not appear' };
-
-    const opts = qsa('[role="option"]');
-    const hit = opts.find(o => optionTextRe.test(norm(o.textContent)));
-    if (!hit) return { ok: false, reason: 'option not found' };
-
-    clickReal(hit);
-    return { ok: true };
-  }
-
-  function inputWhereFrom() {
-    return qs('input[aria-label="Where from?"], input[aria-label^="Where from"]');
-  }
-  function inputWhereTo() {
-    return qs('input[aria-label="Where to?"], input[aria-label^="Where to"]');
-  }
-
-  async function setAirportInput(inputEl, codeOrText) {
-    if (!inputEl) return { ok: false, reason: 'input not found' };
-    clickReal(inputEl);
-    await sleep(100);
-
-    // Clear via value + input events
-    typeInto(inputEl, codeOrText);
-
-    // Try to select first suggestion
-    const okSuggest = await waitFor(() => {
-      const opts = qsa('[role="option"]');
-      return opts.length > 0;
-    }, CFG.airportSetTimeoutMs, 200);
-
-    if (okSuggest) {
-      const opts = qsa('[role="option"]');
-      // Prefer option containing the code (e.g., "YYZ"), else first option
-      const up = String(codeOrText).trim().toUpperCase();
-      const best = opts.find(o => norm(o.textContent).toUpperCase().includes(up)) || opts[0];
-      if (best) clickReal(best);
-      await sleep(150);
-      return { ok: true };
-    }
-
-    // Fallback: press Enter (sometimes accepts typed text)
-    try {
-      inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-      inputEl.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
-      return { ok: true, fallback: true };
-    } catch (e) {}
-
-    return { ok: false, reason: 'no suggestions appeared' };
-  }
-
-  function getDepartureLabel() {
-    const dep = qs('input[aria-label="Departure"], input[placeholder="Departure"]');
-    return norm(dep ? dep.value : '');
-  }
-
-  function getDepISOFromLabelGuess(label) {
-    if (!label) return '';
-    // We guess year from configured start/end range (same year expected)
-    const year = (CFG.startDateISO || '').slice(0, 4) || String(new Date().getFullYear());
-    const d = new Date(`${label} ${year}`);
-    if (!isNaN(d.getTime())) return dateToISO(d);
-
-    const stripped = label.replace(/^[A-Za-z]{3,},\s*/g, '');
-    const d2 = new Date(`${stripped} ${year}`);
-    if (!isNaN(d2.getTime())) return dateToISO(d2);
-
-    return '';
-  }
-
-  function findDayDeltaButton(delta) {
-    // delta: -1 or +1
-    const depInput = qs('input[aria-label="Departure"], input[placeholder="Departure"]');
-    const sel = `button[jsname="a1ZUMe"][data-delta="${delta}"]`;
-    if (depInput) {
-      const wrap = depInput.closest('.NA5Egc') || depInput.parentElement;
-      if (wrap) {
-        const btn = wrap.querySelector(sel);
-        if (btn) return btn;
-      }
-    }
-    return qs(sel);
-  }
-
-  async function gotoDepartureISO(targetISO) {
-    const depInput = qs('input[aria-label="Departure"], input[placeholder="Departure"]');
-    if (!depInput) return { ok: false, reason: 'departure input not found' };
-
-    // Loop click +1 or -1 until matches target
-    const start = Date.now();
-    let guard = 0;
-
-    while (Date.now() - start < CFG.dateChangeTimeoutMs) {
-      guard++;
-      if (guard > 600) return { ok: false, reason: 'guard limit reached' };
-
-      const curLabel = getDepartureLabel();
-      const curISO = getDepISOFromLabelGuess(curLabel);
-      if (curISO === targetISO) return { ok: true };
-
-      // If we can't parse current date, try to open date picker and bail
-      if (!curISO) {
-        return { ok: false, reason: `cannot parse current departure label: "${curLabel}"` };
-      }
-
-      const delta = cmpISO(curISO, targetISO) < 0 ? 1 : -1;
-      const btn = findDayDeltaButton(delta);
-      if (!btn) return { ok: false, reason: `day delta button not found (delta=${delta})` };
-
-      const prevLabel = curLabel;
-      clickReal(btn);
-
-      const changed = await waitFor(() => getDepartureLabel() && getDepartureLabel() !== prevLabel, 15000, 250);
-      if (!changed) return { ok: false, reason: 'timeout waiting for departure to change' };
-
-      // small settle
-      await sleep(150);
-    }
-    return { ok: false, reason: 'timeout reaching target date' };
-  }
-
-  /********************
-   * Cheapest tab + loading
+   * Flights DOM hooks (Cheapest + Date navigation)
    ********************/
   function findCheapestTab() {
     const byId = document.getElementById('M7sBEb');
@@ -600,8 +446,61 @@
       CFG.waitReadyTimeoutMs, CFG.waitReadyIntervalMs);
   }
 
+  function getDepartureLabel() {
+    const dep = qs('input[aria-label="Departure"], input[placeholder="Departure"]');
+    return norm(dep ? dep.value : '');
+  }
+
+  function getDepISOFromLabelGuess(label) {
+    if (!label) return '';
+    const year = (CFG.startDateISO || '').slice(0, 4) || String(new Date().getFullYear());
+    const d = new Date(`${label} ${year}`);
+    if (!isNaN(d.getTime())) return dateToISO(d);
+
+    const stripped = label.replace(/^[A-Za-z]{3,},\s*/g, '');
+    const d2 = new Date(`${stripped} ${year}`);
+    if (!isNaN(d2.getTime())) return dateToISO(d2);
+
+    return '';
+  }
+
+  function findNextDayButtonNearDeparture() {
+    const depInput = qs('input[aria-label="Departure"], input[placeholder="Departure"]');
+    if (depInput) {
+      const wrap = depInput.closest('.NA5Egc') || depInput.parentElement;
+      if (wrap) {
+        const btn = wrap.querySelector('button[jsname="a1ZUMe"][data-delta="1"]');
+        if (btn) return btn;
+      }
+    }
+    return qs('button[jsname="a1ZUMe"][data-delta="1"]');
+  }
+
+  async function clickNextDayOnce() {
+    const now = Date.now();
+    if (now - state.lastNextDayClickTs < CFG.nextDayClickCooldownMs) {
+      return { clicked: false, reason: 'next-day click throttled' };
+    }
+
+    const btn = findNextDayButtonNearDeparture();
+    if (!btn) return { clicked: false, reason: 'next-day button not found' };
+
+    state.lastNextDayClickTs = now;
+
+    const prevLabel = getDepartureLabel();
+    clickReal(btn);
+
+    const okChange = await waitFor(() => {
+      const newLabel = getDepartureLabel();
+      return newLabel && newLabel !== prevLabel;
+    }, CFG.nextDayChangeTimeoutMs, 250);
+
+    if (!okChange) return { clicked: false, reason: 'timeout waiting for departure to change' };
+    return { clicked: true, reason: 'clicked next day' };
+  }
+
   /********************
-   * Connecting airports (auto-uncheck US)
+   * Connecting airports (auto-uncheck US) - unchanged
    ********************/
   function findConnectingAirportsChipButton() {
     const chipContainer = document.querySelector('div[data-filtertype="8"].wpMGDb, div[data-filtertype="8"][jsname="qZXsDd"]');
@@ -685,57 +584,7 @@
   }
 
   /********************
-   * PLAN BUILDING
-   ********************/
-  function normalizeCabins(cabins) {
-    const all = ['econ','pe','biz','first'];
-    if (cabins === 'all') return all;
-    if (Array.isArray(cabins) && cabins.length) return cabins;
-    return ['econ'];
-  }
-
-  function cabinToUiRegex(cabinKey) {
-    // match visible option label for seating class
-    // These strings may vary by locale; adjust if needed.
-    switch (cabinKey) {
-      case 'econ':  return /economy/i;
-      case 'pe':    return /premium\s*economy/i;
-      case 'biz':   return /business/i;
-      case 'first': return /^first$/i;
-      default:      return /economy/i;
-    }
-  }
-
-  function tripTypeToUiRegex(tripType) {
-    // Google labels often: "One-way" / "Round trip"
-    if (tripType === 'roundtrip') return /round\s*trip/i;
-    return /one-?way/i;
-  }
-
-  function buildPlan() {
-    const cabins = normalizeCabins(CFG.cabins);
-    const plan = [];
-
-    let d = CFG.startDateISO;
-    while (d && cmpISO(d, CFG.endDateISO) <= 0) {
-      for (const dest of CFG.destinations) {
-        for (const cabin of cabins) {
-          plan.push({
-            origin: CFG.origin,
-            dest,
-            cabin,
-            tripType: CFG.tripType,
-            depISO: d
-          });
-        }
-      }
-      d = addDaysISO(d, CFG.stepDays);
-    }
-    return plan;
-  }
-
-  /********************
-   * STORE + HISTORY
+   * STORE + SIGNATURE
    ********************/
   async function loadStore() {
     const raw = await gmGet(CFG.storeKey, '{}');
@@ -760,9 +609,6 @@
     return lines.length ? lines.join('\n') : 'History: —';
   }
 
-  /********************
-   * SIGNATURE + RECORD
-   ********************/
   function getCurrencyCode() {
     const btn = qs('button[aria-label^="Currency "]');
     if (btn) {
@@ -787,22 +633,22 @@
     return 'UnknownLocation';
   }
 
-  function makeSignature(step) {
+  function makeSignature(seed) {
     const cur = getCurrencyCode();
     const loc = getLocationValue();
     return [
-      `trip=${step.tripType}`,
-      `pax=${CFG.passengers}`,
-      `cabin=${step.cabin}`,
-      `start=${step.origin}`,
-      `end=${step.dest}`,
+      `trip=${CFG.tripType}`,
+      `pax=1`,
+      `cabin=${seed.cabin}`,
+      `start=${seed.origin}`,
+      `end=${seed.dest}`,
       `loc=${loc}`,
       `cur=${cur}`
     ].join('|');
   }
 
-  async function recordCheapest(step, best) {
-    const sig = makeSignature(step);
+  async function recordCheapest(seed, depISO, best) {
+    const sig = makeSignature(seed);
     state.currentSignature = sig;
 
     const store = await loadStore();
@@ -810,23 +656,23 @@
 
     const rec = {
       signature: sig,
-      dateKey: step.depISO,
-      tripType: step.tripType,
-      pax: CFG.passengers,
-      cabin: step.cabin,
-      start: step.origin,
-      end: step.dest,
+      dateKey: depISO,
+      tripType: CFG.tripType,
+      pax: 1,
+      cabin: seed.cabin,
+      start: seed.origin,
+      end: seed.dest,
       loc: getLocationValue(),
       cur: getCurrencyCode(),
-      pretty: `${step.origin}->${step.dest} ${step.depISO}`,
+      pretty: `${seed.origin}->${seed.dest} ${depISO}`,
       cheapest: best.cash,
       cheapestLabel: best.token,
       updatedAt: new Date().toISOString()
     };
 
-    const existing = store[sig][step.depISO];
+    const existing = store[sig][depISO];
     if (!existing || rec.cheapest < existing.cheapest) {
-      store[sig][step.depISO] = rec;
+      store[sig][depISO] = rec;
       await saveStore(store);
       setText(UI.status, `Status: Recorded ✓`);
     } else {
@@ -834,141 +680,157 @@
     }
 
     setText(UI.sig, `Signature: ${sig}`);
-    setText(UI.cheapest, `Cheapest: ${best.token} (date=${step.depISO})`);
+    setText(UI.cheapest, `Cheapest: ${best.token} (date=${depISO})`);
     setText(UI.history, formatHistoryCompact(store[sig]));
   }
 
   /********************
-   * APPLY STEP (set UI to match plan)
+   * PROGRESS (persists across navigation)
    ********************/
-  async function applyStepToUI(step) {
-    setText(UI.status, `Status: Applying step (UI)…`);
-    setText(UI.plan, `Plan: ${step.origin} -> ${step.dest} | ${step.tripType} | ${step.cabin} | ${step.depISO}`);
+  async function loadProgress() {
+    const raw = await gmGet(CFG.progressKey, '');
+    if (!raw) return { seedIndex: 0 };
+    try { return JSON.parse(raw); } catch { return { seedIndex: 0 }; }
+  }
 
-    // Trip type
-    // NOTE: roundtrip UI automation can be added later (return date)
-    const tripRes = await selectFromCombobox(/ticket type/i, tripTypeToUiRegex(step.tripType));
-    if (!tripRes.ok) return { ok: false, reason: `trip type: ${tripRes.reason}` };
-
-    // Cabin class
-    const cabRes = await selectFromCombobox(/seating class|preferred seating class/i, cabinToUiRegex(step.cabin));
-    if (!cabRes.ok) return { ok: false, reason: `cabin: ${cabRes.reason}` };
-
-    // Set origin/dest
-    const fromEl = inputWhereFrom();
-    const toEl = inputWhereTo();
-    const okFrom = await setAirportInput(fromEl, step.origin);
-    if (!okFrom.ok) return { ok: false, reason: `origin: ${okFrom.reason}` };
-
-    const okTo = await setAirportInput(toEl, step.dest);
-    if (!okTo.ok) return { ok: false, reason: `dest: ${okTo.reason}` };
-
-    // Set departure date (by stepping day +/- until target)
-    const dateRes = await gotoDepartureISO(step.depISO);
-    if (!dateRes.ok) return { ok: false, reason: `date: ${dateRes.reason}` };
-
-    return { ok: true };
+  async function saveProgress(p) {
+    await gmSet(CFG.progressKey, JSON.stringify(p));
   }
 
   /********************
-   * MAIN LOOP (batch)
+   * MAIN RUNNER
    ********************/
-  async function runBatch(reason) {
-    const plan = state.plan;
-    if (!plan.length) {
-      setText(UI.status, 'Status: Plan empty');
+  async function ensureOnSeedUrl(seed) {
+    const here = String(location.href);
+    if (here.startsWith(seed.url)) return true;
+
+    // Navigate (full page load). Progress is saved.
+    setText(UI.status, `Status: Navigating to seed URL (${seed.origin}->${seed.dest} ${seed.cabin})…`);
+    await sleep(50);
+    location.assign(seed.url);
+    return false; // execution will restart after navigation
+  }
+
+  async function runLoop(reason) {
+    if (!CFG.seedSearches || !CFG.seedSearches.length) {
+      setText(UI.status, 'Status: No seed URLs configured');
       return;
     }
 
-    let stepsDone = 0;
-    while (state.planIndex < plan.length) {
+    const progress = await loadProgress();
+    let seedIndex = Math.max(0, Math.min(progress.seedIndex || 0, CFG.seedSearches.length - 1));
+    const seed = CFG.seedSearches[seedIndex];
+
+    setText(UI.plan, `Plan: [${seedIndex + 1}/${CFG.seedSearches.length}] ${seed.origin}→${seed.dest} | cabin=${seed.cabin} | ${CFG.startDateISO}..${CFG.endDateISO}`);
+
+    // Ensure we are on the correct seed page first
+    const onSeed = await ensureOnSeedUrl(seed);
+    if (!onSeed) return;
+
+    // Determine current dep date from UI label
+    const depLabel = getDepartureLabel();
+    const depISO = getDepISOFromLabelGuess(depLabel);
+
+    if (!depISO) {
+      setText(UI.status, 'Status: Could not parse departure date from UI (check locale/label)');
+      setText(UI.debug, `Debug: depLabel="${depLabel}"`);
+      return;
+    }
+
+    // If already past end date, advance to next seed
+    if (cmpISO(depISO, CFG.endDateISO) > 0) {
+      seedIndex++;
+      await saveProgress({ seedIndex });
+      if (seedIndex >= CFG.seedSearches.length) {
+        setText(UI.status, 'Status: All seed combos complete ✓');
+        return;
+      }
+      setText(UI.status, 'Status: Combo done → next combo…');
+      location.assign(CFG.seedSearches[seedIndex].url);
+      return;
+    }
+
+    // If before start date, we still proceed and record from current day forward
+    // (Best practice: make seed URL start close to startDateISO to reduce clicks)
+    if (cmpISO(depISO, CFG.startDateISO) < 0) {
+      setText(UI.status, `Status: Seed is before startDate (${depISO} < ${CFG.startDateISO}). Click next-day until start date…`);
+    }
+
+    // Main bounded loop (per page session)
+    let steps = 0;
+    while (steps < CFG.maxLoopSteps) {
+      steps++;
+
       if (state.paused) {
         setText(UI.status, 'Status: Paused');
         return;
       }
 
-      const step = plan[state.planIndex];
-      setText(UI.plan, `Plan: [${state.planIndex + 1}/${plan.length}] ${step.origin} -> ${step.dest} | ${step.tripType} | ${step.cabin} | ${step.depISO}`);
-
-      // Avoid infinite retry storms
-      const key = `${step.origin}|${step.dest}|${step.tripType}|${step.cabin}|${step.depISO}`;
-      if (key !== state.lastStateKey) {
-        state.lastStateKey = key;
-        state.autoAttemptsThisState = 0;
-        state.lastCheapestClickTs = 0;
-      }
-      if (state.autoAttemptsThisState > CFG.maxAutoAttemptsPerState) {
-        setText(UI.status, 'Status: Auto paused (too many attempts). Press "Run batch now".');
-        setText(UI.debug, `Debug: attemptsThisState=${state.autoAttemptsThisState}`);
+      const curLabel = getDepartureLabel();
+      const curISO = getDepISOFromLabelGuess(curLabel);
+      if (!curISO) {
+        setText(UI.status, 'Status: Date parse failed mid-run');
+        setText(UI.debug, `Debug: label="${curLabel}"`);
         return;
       }
 
-      // Apply UI for this plan item
-      const applied = await applyStepToUI(step);
-      if (!applied.ok) {
-        state.autoAttemptsThisState++;
-        setText(UI.status, `Status: Apply failed: ${applied.reason}`);
-        setText(UI.debug, `Debug: If selectors changed, update automation. Current step=${key}`);
-        return;
-      }
-
-      // Ensure Cheapest tab
-      const sel = await ensureCheapestSelectedThrottled();
-      if (!sel.ok) {
-        state.autoAttemptsThisState++;
-        setText(UI.status, `Status: ${sel.reason}`);
-        return;
-      }
-      if (sel.clicked) {
-        setText(UI.status, 'Status: Clicked Cheapest (waiting…)');
-        return; // next scheduler tick will continue
-      }
-
-      setText(UI.status, `Status: Waiting for load…`);
-      const ready = await waitUntilReady();
-      if (!ready) {
-        state.autoAttemptsThisState++;
-        setText(UI.status, `Status: Ready timeout`);
-        return;
-      }
-
-      // Auto-remove US connections on signature change (kept from original)
-      const sig = makeSignature(step);
-      const sigChanged = (sig !== state.lastSignatureSeen);
-      if (sigChanged) state.lastSignatureSeen = sig;
-      if (sigChanged) {
-        const appliedUS = await applyRemoveUSConnectionsIfNeeded(sig, 'sig-change');
-        if (appliedUS) {
-          setText(UI.status, 'Status: Waiting reload after Remove US…');
-          const ready2 = await waitUntilReady();
-          if (!ready2) {
-            state.autoAttemptsThisState++;
-            setText(UI.status, 'Status: Reload timeout after Remove US');
-            return;
-          }
+      // If beyond end date, move to next seed combo
+      if (cmpISO(curISO, CFG.endDateISO) > 0) {
+        seedIndex++;
+        await saveProgress({ seedIndex });
+        if (seedIndex >= CFG.seedSearches.length) {
+          setText(UI.status, 'Status: All seed combos complete ✓');
+          return;
         }
-      }
-
-      const best = getCheapestTabPrice();
-      if (!best) {
-        state.autoAttemptsThisState++;
-        setText(UI.status, 'Status: No Cheapest price found');
+        setText(UI.status, 'Status: Combo complete → navigating to next combo…');
+        location.assign(CFG.seedSearches[seedIndex].url);
         return;
       }
 
-      await recordCheapest(step, best);
-      setText(UI.debug, `Debug: loading=${loadingIndicatorExists() ? 1 : 0}`);
+      // Ensure Cheapest tab selected
+      const sel = await ensureCheapestSelectedThrottled();
+      if (!sel.ok) { setText(UI.status, `Status: ${sel.reason}`); return; }
+      if (sel.clicked) { setText(UI.status, 'Status: Clicked Cheapest (waiting…)'); return; }
 
-      // Advance
-      state.planIndex++;
-      stepsDone++;
-      state.autoAttemptsThisState = 0;
+      // Wait for load
+      setText(UI.status, `Status: Waiting for load… (${curISO})`);
+      const ready = await waitUntilReady();
+      if (!ready) { setText(UI.status, 'Status: Ready timeout'); return; }
 
-      // Tiny delay to avoid hammering UI
-      await sleep(300);
+      // Apply Remove US connections when signature changes (seed-specific signature)
+      const sig = makeSignature(seed);
+      if (sig !== state.lastSignatureSeen) state.lastSignatureSeen = sig;
+
+      const removed = await applyRemoveUSConnectionsIfNeeded(sig, 'sig-change');
+      if (removed) {
+        setText(UI.status, 'Status: Waiting reload after Remove US…');
+        const ready2 = await waitUntilReady();
+        if (!ready2) { setText(UI.status, 'Status: Reload timeout after Remove US'); return; }
+      }
+
+      // Record if within desired start..end
+      if (cmpISO(curISO, CFG.startDateISO) >= 0 && cmpISO(curISO, CFG.endDateISO) <= 0) {
+        const best = getCheapestTabPrice();
+        if (!best) { setText(UI.status, 'Status: No Cheapest price found'); return; }
+        await recordCheapest(seed, curISO, best);
+      } else {
+        setText(UI.status, `Status: Skipping record (outside range): ${curISO}`);
+      }
+
+      setText(UI.debug, `Debug: curISO=${curISO} loading=${loadingIndicatorExists() ? 1 : 0}`);
+
+      // Next day
+      const clickRes = await clickNextDayOnce();
+      if (!clickRes.clicked) {
+        setText(UI.status, `Status: Stopped (${clickRes.reason})`);
+        return;
+      }
+
+      setText(UI.status, 'Status: Clicked next day → waiting…');
+      await sleep(350);
     }
 
-    setText(UI.status, `Status: Batch complete ✓ (${stepsDone} records in this run)`);
+    setText(UI.status, `Status: Stopped (max steps ${CFG.maxLoopSteps})`);
   }
 
   /********************
@@ -977,19 +839,12 @@
   const state = {
     running: false,
     paused: false,
-
-    // plan
-    plan: [],
-    planIndex: 0,
-
-    // throttles & state
     debounceTimer: null,
+
     lastCheapestClickTs: 0,
     lastConnDialogTs: 0,
-    lastStateKey: '',
-    autoAttemptsThisState: 0,
+    lastNextDayClickTs: 0,
 
-    // signature tracking
     lastSignatureSeen: '',
     lastSignatureAppliedForUS: '',
     currentSignature: ''
@@ -1006,7 +861,6 @@
   async function runOnce(reason) {
     if (state.running) return;
 
-    // while paused ignore auto triggers; allow manual
     if (state.paused && !String(reason || '').startsWith('manual')) {
       setText(UI.status, 'Status: Paused (auto ignored)');
       return;
@@ -1014,7 +868,7 @@
 
     state.running = true;
     try {
-      await runBatch(reason);
+      await runLoop(reason);
     } catch (e) {
       err('runOnce failed:', e);
       setText(UI.status, 'Status: Error — check console');
@@ -1034,31 +888,18 @@
     setInterval(() => { schedule('poll'); }, CFG.pollIntervalMs);
   }
 
-  /********************
-   * BOOT
-   ********************/
   async function boot() {
     await mountPanelOnce();
     startPanelKeeper();
 
-    // Initialize plan
-    state.plan = CFG.batchEnabled ? buildPlan() : [];
-    state.planIndex = 0;
-
-    setText(UI.plan, `Plan: ${state.plan.length ? `${state.plan.length} steps queued` : 'Batch disabled/empty'}`);
-    setText(UI.history, 'History: —');
-
     // Load paused state
     const pausedPref = await gmGet(CFG.prefPausedKey, '0');
     state.paused = (pausedPref === '1');
-    const pbtn = document.getElementById(UI.pauseBtn);
-    if (pbtn) pbtn.textContent = state.paused ? 'Pause: ON' : 'Pause: OFF';
     setText(UI.status, state.paused ? 'Status: Ready (Paused)' : 'Status: Ready');
 
     observeSpa();
     startPolling();
 
-    // Kick off automatically once on boot (if not paused)
     schedule('boot');
   }
 
