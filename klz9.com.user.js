@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         KLZ9 Manga Translator Pro
+// @name         KLZ9 Manga Translator Pro (SPA Support)
 // @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  OCR and translate manga pages using OpenRouter Gemini API with persistent settings, global controls, and minimizable UI.
-// @match        https://klz9.com/*chapter*.html
+// @version      4.0
+// @description  OCR and translate manga pages with full SPA (Soft Reload) support.
+// @match        https://klz9.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -14,10 +14,8 @@
 (function() {
     'use strict';
 
-    // --- Configuration & Database ---
     const DB_PREFIX = "MangaTranslator_";
 
-    // Default Settings
     let settings = {
         apiKey: GM_getValue(DB_PREFIX + "ApiKey", ""),
         aiModel: GM_getValue(DB_PREFIX + "AiModel", "google/gemini-2.5-flash-lite-preview-09-2025"),
@@ -26,7 +24,6 @@
         isMinimized: GM_getValue(DB_PREFIX + "IsMinimized", false)
     };
 
-    // Save Settings Helper
     function saveSettings() {
         GM_setValue(DB_PREFIX + "ApiKey", settings.apiKey);
         GM_setValue(DB_PREFIX + "AiModel", settings.aiModel);
@@ -36,8 +33,12 @@
         updateGlobalStyles();
     }
 
-    // --- UI Construction ---
+    // --- 判斷是否為漫畫閱讀頁 ---
+    function isChapterPage() {
+        return location.href.includes('-chapter-') && location.href.includes('.html');
+    }
 
+    // --- 注入 CSS (只執行一次) ---
     const styleSheet = document.createElement("style");
     document.head.appendChild(styleSheet);
 
@@ -95,53 +96,31 @@
                 backdrop-filter: blur(5px);
                 width: 260px;
             }
-            .mt-btn {
-                background: #4f46e5;
-                color: white;
-                border: none;
-                padding: 5px 10px;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 12px;
-                transition: background 0.2s;
-            }
+            .mt-btn { background: #4f46e5; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s; }
             .mt-btn:hover { background: #4338ca; }
             .mt-btn:disabled { background: #6b7280; cursor: not-allowed; }
             .mt-btn-sm { padding: 2px 6px; margin: 0 2px; }
             .mt-btn-retry { background: #f59e0b; margin-left: 5px; }
             .mt-btn-retry:hover { background: #d97706; }
-            .mt-btn-hamburger {
-                background: rgba(30, 41, 59, 0.95);
-                border: 1px solid rgba(255,255,255,0.2);
-                color: white;
-                font-size: 20px;
-                width: 44px;
-                height: 44px;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-                cursor: pointer;
-            }
+            .mt-btn-hamburger { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(255,255,255,0.2); color: white; font-size: 20px; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); cursor: pointer; }
             .mt-btn-hamburger:hover { background: rgba(50, 61, 79, 0.95); }
             .mt-label { margin-right: 5px; display: inline-block; width: 60px; }
             .mt-divider { margin: 10px 0; border-top: 1px solid rgba(255,255,255,0.2); }
         `;
     }
 
-    // 2. Create Floating Control Panel
+    // --- 建立控制面板 ---
     function createControlPanel() {
+        if (document.querySelector('.mt-container')) return; // 防止重複建立
+
         const container = document.createElement('div');
         container.className = 'mt-container';
 
-        // Hamburger Menu (Minimized View)
         const minView = document.createElement('div');
         minView.className = 'mt-btn-hamburger';
         minView.innerHTML = '☰';
         minView.style.display = settings.isMinimized ? 'flex' : 'none';
 
-        // Full Panel (Expanded View)
         const fullView = document.createElement('div');
         fullView.className = 'mt-control-panel';
         fullView.style.display = settings.isMinimized ? 'none' : 'block';
@@ -176,7 +155,6 @@
         container.appendChild(fullView);
         document.body.appendChild(container);
 
-        // Toggle Events
         minView.onclick = () => {
             settings.isMinimized = false;
             saveSettings();
@@ -191,7 +169,6 @@
             minView.style.display = 'flex';
         };
 
-        // Button Events
         document.getElementById('mt-btn-all').onclick = translateAll;
         document.getElementById('mt-btn-apikey').onclick = promptApiKey;
         document.getElementById('mt-btn-model').onclick = promptModel;
@@ -202,26 +179,17 @@
         document.getElementById('mt-zh-plus').onclick = () => { settings.fontSizeZh++; saveSettings(); };
     }
 
-    // --- Core Logic ---
-
     function promptApiKey() {
         const key = prompt("請輸入 OpenRouter API Key:", settings.apiKey);
-        if (key !== null) {
-            settings.apiKey = key.trim();
-            saveSettings();
-            alert("API Key 已儲存！");
-        }
+        if (key !== null) { settings.apiKey = key.trim(); saveSettings(); alert("API Key 已儲存！"); }
     }
 
     function promptModel() {
         const m = prompt("請輸入 OpenRouter Model ID:", settings.aiModel);
-        if (m !== null && m.trim() !== "") {
-            settings.aiModel = m.trim();
-            saveSettings();
-            alert("AI 模型已更新！\n當前使用: " + settings.aiModel);
-        }
+        if (m !== null && m.trim() !== "") { settings.aiModel = m.trim(); saveSettings(); alert("AI 模型已更新！\n當前使用: " + settings.aiModel); }
     }
 
+    // --- 注入圖片按鈕 ---
     function injectImageControls() {
         const images = document.querySelectorAll('img[src*="/images2/"], img[src*="/images3/"]');
         images.forEach(img => {
@@ -255,9 +223,9 @@
         });
     }
 
+    // --- API 呼叫 ---
     async function translateAll() {
         if (!settings.apiKey) { promptApiKey(); if(!settings.apiKey) return; }
-
         const buttons = document.querySelectorAll('.mt-action-btn');
         const btnAll = document.getElementById('mt-btn-all');
         btnAll.disabled = true;
@@ -271,7 +239,6 @@
                 await new Promise(r => setTimeout(r, 1500));
             }
         }
-
         btnAll.disabled = false;
         btnAll.innerText = `完成 (${count} 頁)`;
         setTimeout(() => { btnAll.innerText = "一鍵翻譯全部"; }, 3000);
@@ -296,22 +263,15 @@
 
     async function processImage(img, wrapper, btn) {
         if (!settings.apiKey) { promptApiKey(); if(!settings.apiKey) return; }
-
         btn.innerText = '讀取...';
         btn.disabled = true;
 
         try {
             const base64DataUrl = await getBase64Image(img.src);
             const base64Data = base64DataUrl.split(',')[1];
-
             btn.innerText = 'AI 思考中...';
 
-            const promptText = `
-                You are a professional manga translator.
-                Extract all Japanese text from this manga page and translate it into Hong Kong style Traditional Chinese (書面語, written Chinese, strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺).
-                Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks.
-                Format: [{"ja": "Japanese text", "zh": "Chinese text"}]
-            `;
+            const promptText = `You are a professional manga translator. Extract all Japanese text from this manga page and translate it into Hong Kong style Traditional Chinese (書面語, written Chinese, strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺). Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks. Format: [{"ja": "Japanese text", "zh": "Chinese text"}]`;
 
             GM_xmlhttpRequest({
                 method: 'POST',
@@ -323,30 +283,20 @@
                     'X-Title': 'Manga Translator Pro'
                 },
                 data: JSON.stringify({
-                    model: settings.aiModel, // 現在使用數據庫內儲存的模型設定
+                    model: settings.aiModel,
                     response_format: { type: "json_object" },
                     messages: [
-                        {
-                            role: "user",
-                            content: [
-                                { type: "text", text: promptText },
-                                { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
-                            ]
-                        }
+                        { role: "user", content: [ { type: "text", text: promptText }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } } ] }
                     ]
                 }),
                 onload: function(response) {
                     btn.disabled = false;
                     try {
                         if (response.status !== 200) throw new Error("API Status: " + response.status);
-
                         const resJson = JSON.parse(response.responseText);
                         let content = resJson.choices[0].message.content;
                         content = content.replace(/^```json\n?/g, '').replace(/\n?```$/g, '').trim();
-                        const translatedData = JSON.parse(content);
-
-                        renderTranslation(wrapper, translatedData, btn);
-
+                        renderTranslation(wrapper, JSON.parse(content), btn);
                     } catch (e) {
                         console.error("Error:", e, response.responseText);
                         btn.innerText = '失敗 (點擊重試)';
@@ -361,7 +311,6 @@
                     btn.style.background = '#ef4444';
                 }
             });
-
         } catch (error) {
             console.error(error);
             btn.innerText = '錯誤 (重試)';
@@ -378,36 +327,46 @@
         btn.style.background = '#f59e0b';
 
         let dataArray = Array.isArray(data) ? data : (data.translations || Object.values(data));
-
         const panel = document.createElement('div');
         panel.className = 'mt-panel';
         const imgHeight = wrapper.querySelector('img').clientHeight;
         if (imgHeight > 0) panel.style.maxHeight = imgHeight + 'px';
 
         let htmlContent = '<h3 style="margin-top:0; border-bottom: 2px solid #333; padding-bottom: 5px; font-size:16px;">日中對照</h3>';
-
         dataArray.forEach(item => {
             if(item.ja && item.zh) {
-                htmlContent += `
-                    <div class="mt-row">
-                        <div class="mt-ja">${item.ja}</div>
-                        <div class="mt-zh">${item.zh}</div>
-                    </div>
-                `;
+                htmlContent += `<div class="mt-row"><div class="mt-ja">${item.ja}</div><div class="mt-zh">${item.zh}</div></div>`;
             }
         });
-
         panel.innerHTML = htmlContent;
         wrapper.insertBefore(panel, wrapper.firstChild);
     }
 
-    // --- Initialization ---
-    updateGlobalStyles();
-    createControlPanel();
+    // --- SPA 路由與生命週期管理 ---
+    function checkPageContext() {
+        const container = document.querySelector('.mt-container');
+        
+        if (isChapterPage()) {
+            // 如果是在漫畫閱讀頁
+            if (!container) createControlPanel();
+            else container.style.display = 'block'; // 確保面板顯示
+            injectImageControls(); // 嘗試為新載入的圖片加入按鈕
+        } else {
+            // 如果返回了目錄頁或其他非閱讀頁面
+            if (container) container.style.display = 'none'; // 隱藏面板
+        }
+    }
 
-    const observer = new MutationObserver(() => injectImageControls());
+    updateGlobalStyles();
+
+    // 依賴 MutationObserver 不斷偵測 DOM 變化（完美解決 React/Next.js 的 Soft Reload）
+    const observer = new MutationObserver(() => {
+        checkPageContext();
+    });
+    
     observer.observe(document.body, { childList: true, subtree: true });
 
-    setTimeout(injectImageControls, 2000);
+    // 初始執行一次
+    checkPageContext();
 
 })();
