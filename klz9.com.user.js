@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         KLZ9 Manga Translator Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
-// @description  OCR and translate manga pages. Improved AI Prompt for contextual and grouped bubble translation.
+// @version      3.5
+// @description  OCR and translate manga pages. Added Glossary support and 24-hour translation cache.
 // @match        https://klz9.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @connect      openrouter.ai
+// @connect      githubusercontent.com
 // @connect      *
 // ==/UserScript==
 
@@ -15,7 +16,10 @@
     'use strict';
 
     // --- Configuration & Database ---
+    const SCRIPT_VERSION = "3.5";
     const DB_PREFIX = "MangaTranslator_";
+    const GLOSSARY_RAW_URL = "https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json";
+    const GLOSSARY_EDIT_URL = "https://github.com/brittenpoon/4n1m3-g4m3r-v0/blob/main/Glossary.json";
 
     let settings = {
         apiKey: GM_getValue(DB_PREFIX + "ApiKey", ""),
@@ -32,6 +36,86 @@
         GM_setValue(DB_PREFIX + "FontSizeZh", settings.fontSizeZh);
         GM_setValue(DB_PREFIX + "IsMinimized", settings.isMinimized);
         updateGlobalStyles();
+    }
+
+    // --- Glossary Manager ---
+    let cachedGlossaryString = "";
+
+    function fetchGlossary() {
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: GLOSSARY_RAW_URL,
+            onload: function(res) {
+                try {
+                    const arr = JSON.parse(res.responseText);
+                    let glossaryTerms = [];
+                    arr.forEach(item => {
+                        if(item.orig && item.trans) {
+                            glossaryTerms.push(`${item.orig} -> ${item.trans}`);
+                        }
+                    });
+                    cachedGlossaryString = glossaryTerms.join("\n");
+                    console.log("Manga Translator: Glossary loaded successfully.", glossaryTerms.length, "terms.");
+                } catch(e) {
+                    console.error("Manga Translator: Failed to parse Glossary JSON.", e);
+                }
+            }
+        });
+    }
+
+    // --- Cache Manager (24 Hours) ---
+    const CACHE_KEY = DB_PREFIX + "TransCache";
+
+    function getCacheObj() {
+        return GM_getValue(CACHE_KEY, {});
+    }
+
+    function saveCacheObj(obj) {
+        GM_setValue(CACHE_KEY, obj);
+    }
+
+    function cleanOldCache() {
+        let cache = getCacheObj();
+        const now = Date.now();
+        const MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours in ms
+        let changed = false;
+
+        for (let url in cache) {
+            // Invalidate if older than 24h OR script version changed
+            if (now - cache[url].timestamp > MAX_AGE || cache[url].version !== SCRIPT_VERSION) {
+                delete cache[url];
+                changed = true;
+            }
+        }
+        if (changed) saveCacheObj(cache);
+    }
+
+    function getTransCache(url) {
+        let cache = getCacheObj();
+        let entry = cache[url];
+        if (!entry) return null;
+        if (Date.now() - entry.timestamp > 24 * 60 * 60 * 1000) return null; // Time check
+        if (entry.model !== settings.aiModel || entry.version !== SCRIPT_VERSION) return null; // Model/Version check
+        return entry.data;
+    }
+
+    function setTransCache(url, data) {
+        let cache = getCacheObj();
+        cache[url] = {
+            data: data,
+            timestamp: Date.now(),
+            model: settings.aiModel,
+            version: SCRIPT_VERSION
+        };
+        saveCacheObj(cache);
+    }
+
+    function clearTransCache(url) {
+        let cache = getCacheObj();
+        if (cache[url]) {
+            delete cache[url];
+            saveCacheObj(cache);
+        }
     }
 
     // --- UI Construction ---
@@ -110,6 +194,7 @@
             </div>
             <div class="mt-divider"></div>
             <div style="margin-bottom:5px;">
+                <button id="mt-btn-glossary" class="mt-btn" style="width:100%; background:#059669; margin-bottom:5px;">編輯字典 (Glossary)</button>
                 <button id="mt-btn-model" class="mt-btn" style="width:100%; background:#4b5563; margin-bottom:5px;">設定 AI 模型</button>
                 <button id="mt-btn-apikey" class="mt-btn" style="width:100%; background:#374151;">設定 API Key</button>
             </div>
@@ -125,6 +210,7 @@
         document.getElementById('mt-btn-all').onclick = translateAll;
         document.getElementById('mt-btn-apikey').onclick = promptApiKey;
         document.getElementById('mt-btn-model').onclick = promptModel;
+        document.getElementById('mt-btn-glossary').onclick = () => window.open(GLOSSARY_EDIT_URL, '_blank');
 
         document.getElementById('mt-ja-minus').onclick = () => { settings.fontSizeJa--; saveSettings(); };
         document.getElementById('mt-ja-plus').onclick = () => { settings.fontSizeJa++; saveSettings(); };
@@ -228,6 +314,14 @@
     }
 
     async function processImage(img, wrapper, btn) {
+        // [新增] 快取機制檢查
+        const cachedData = getTransCache(img.src);
+        if (cachedData) {
+            console.log("Manga Translator: Loaded from Cache.");
+            renderTranslation(img, wrapper, cachedData, btn);
+            return; // 命中快取，直接退出，唔 Call API
+        }
+
         if (!settings.apiKey) { promptApiKey(); if(!settings.apiKey) return; }
         btn.innerText = '讀取...';
         btn.disabled = true;
@@ -237,16 +331,20 @@
             const base64Data = base64DataUrl.split(',')[1];
             btn.innerText = 'AI 思考中...';
 
-            // 強化版 Prompt：強制合併對話框句子，並利用全局語境
-            const promptText = `
+            let promptText = `
                 You are a professional manga translator. Follow these strict steps:
                 1. Read and analyze ALL text on the provided manga page to understand the full context, tone, and flow of the conversation.
-                2. Extract the Japanese text. IMPORTANT RULE: Group lines of text that belong to the same speech bubble, the same panel, or the same continuous thought into a SINGLE paragraph. Do NOT separate text line-by-line. (e.g., if a bubble has 3 lines of text, output them as one continuous string).
+                2. Extract the Japanese text. IMPORTANT RULE: Group lines of text that belong to the same speech bubble, the same panel, or the same continuous thought into a SINGLE paragraph. Do NOT separate text line-by-line.
                 3. Translate the grouped text into Hong Kong style Traditional Chinese (書面語, written Chinese). Strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺.
                 4. Ensure the translation makes logical sense based on the context of the entire page conversation.
                 5. Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks.
                 Format: [{"ja": "Grouped Japanese text (e.g. full bubble/panel)", "zh": "Natural contextual Chinese translation"}]
             `;
+
+            // 如果字典載入成功，強制寫入 Prompt
+            if (cachedGlossaryString) {
+                promptText += `\n\nCRITICAL GLOSSARY (Strictly use these specific translations for names and terms):\n${cachedGlossaryString}`;
+            }
 
             GM_xmlhttpRequest({
                 method: 'POST',
@@ -271,7 +369,13 @@
                         const resJson = JSON.parse(response.responseText);
                         let content = resJson.choices[0].message.content;
                         content = content.replace(/^```json\n?/g, '').replace(/\n?```$/g, '').trim();
-                        renderTranslation(wrapper, JSON.parse(content), btn);
+                        
+                        const translatedData = JSON.parse(content);
+                        
+                        // 儲存成功結果到 Cache
+                        setTransCache(img.src, translatedData);
+
+                        renderTranslation(img, wrapper, translatedData, btn);
                     } catch (e) {
                         console.error("Error:", e, response.responseText);
                         btn.innerText = '失敗 (點擊重試)';
@@ -292,13 +396,23 @@
         }
     }
 
-    function renderTranslation(wrapper, data, btn) {
+    // 注意：參數加入咗 img 以便處理 Cache 刪除
+    function renderTranslation(img, wrapper, data, btn) {
         const existingPanel = wrapper.querySelector('.mt-panel');
         if (existingPanel) existingPanel.remove();
 
         btn.innerText = '↻ 重試';
+        btn.disabled = false;
         btn.className = 'mt-btn mt-btn-retry';
         btn.style.background = '#f59e0b';
+        
+        // 覆寫重試按鈕行為：先清 Cache，再重新 Call API
+        btn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            clearTransCache(img.src);
+            processImage(img, wrapper, btn);
+        };
 
         let dataArray = Array.isArray(data) ? data : (data.translations || Object.values(data));
         const panel = document.createElement('div');
@@ -317,6 +431,8 @@
     }
 
     // --- 初始化及簡單定時器 (Timer) ---
+    cleanOldCache(); // 載入時清理過期 Cache
+    fetchGlossary(); // 非同步獲取 GitHub 字典
     updateGlobalStyles();
 
     function checkUrlState() {
