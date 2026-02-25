@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         KLZ9 Manga Translator Pro (SPA Support)
+// @name         KLZ9 Manga Translator Pro
 // @namespace    http://tampermonkey.net/
-// @version      4.0
-// @description  OCR and translate manga pages with full SPA (Soft Reload) support.
+// @version      3.1
+// @description  OCR and translate manga pages using OpenRouter. Base v3.0 with simple timer-based SPA URL check.
 // @match        https://klz9.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -14,6 +14,7 @@
 (function() {
     'use strict';
 
+    // --- Configuration & Database ---
     const DB_PREFIX = "MangaTranslator_";
 
     let settings = {
@@ -33,12 +34,7 @@
         updateGlobalStyles();
     }
 
-    // --- 判斷是否為漫畫閱讀頁 ---
-    function isChapterPage() {
-        return location.href.includes('-chapter-') && location.href.includes('.html');
-    }
-
-    // --- 注入 CSS (只執行一次) ---
+    // --- UI Construction ---
     const styleSheet = document.createElement("style");
     document.head.appendChild(styleSheet);
 
@@ -61,41 +57,11 @@
                 overflow-y: auto;
                 flex-shrink: 0;
             }
-            .mt-row {
-                margin-bottom: 12px;
-                border-bottom: 1px dashed #ddd;
-                padding-bottom: 8px;
-            }
-            .mt-ja {
-                color: #666;
-                font-size: var(--mt-font-ja);
-                line-height: 1.4;
-                margin-bottom: 4px;
-            }
-            .mt-zh {
-                color: #000;
-                font-weight: bold;
-                font-size: var(--mt-font-zh);
-                line-height: 1.5;
-            }
-            .mt-container {
-                position: fixed;
-                bottom: 20px;
-                right: 20px;
-                z-index: 9999;
-                font-family: sans-serif;
-                font-size: 13px;
-            }
-            .mt-control-panel {
-                background: rgba(30, 41, 59, 0.95);
-                color: white;
-                padding: 15px;
-                border-radius: 12px;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-                border: 1px solid rgba(255,255,255,0.1);
-                backdrop-filter: blur(5px);
-                width: 260px;
-            }
+            .mt-row { margin-bottom: 12px; border-bottom: 1px dashed #ddd; padding-bottom: 8px; }
+            .mt-ja { color: #666; font-size: var(--mt-font-ja); line-height: 1.4; margin-bottom: 4px; }
+            .mt-zh { color: #000; font-weight: bold; font-size: var(--mt-font-zh); line-height: 1.5; }
+            .mt-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; font-family: sans-serif; font-size: 13px; }
+            .mt-control-panel { background: rgba(30, 41, 59, 0.95); color: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(5px); width: 260px; }
             .mt-btn { background: #4f46e5; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s; }
             .mt-btn:hover { background: #4338ca; }
             .mt-btn:disabled { background: #6b7280; cursor: not-allowed; }
@@ -109,10 +75,7 @@
         `;
     }
 
-    // --- 建立控制面板 ---
     function createControlPanel() {
-        if (document.querySelector('.mt-container')) return; // 防止重複建立
-
         const container = document.createElement('div');
         container.className = 'mt-container';
 
@@ -155,19 +118,8 @@
         container.appendChild(fullView);
         document.body.appendChild(container);
 
-        minView.onclick = () => {
-            settings.isMinimized = false;
-            saveSettings();
-            minView.style.display = 'none';
-            fullView.style.display = 'block';
-        };
-
-        document.getElementById('mt-btn-min').onclick = () => {
-            settings.isMinimized = true;
-            saveSettings();
-            fullView.style.display = 'none';
-            minView.style.display = 'flex';
-        };
+        minView.onclick = () => { settings.isMinimized = false; saveSettings(); minView.style.display = 'none'; fullView.style.display = 'block'; };
+        document.getElementById('mt-btn-min').onclick = () => { settings.isMinimized = true; saveSettings(); fullView.style.display = 'none'; minView.style.display = 'flex'; };
 
         document.getElementById('mt-btn-all').onclick = translateAll;
         document.getElementById('mt-btn-apikey').onclick = promptApiKey;
@@ -179,6 +131,7 @@
         document.getElementById('mt-zh-plus').onclick = () => { settings.fontSizeZh++; saveSettings(); };
     }
 
+    // --- Core Logic ---
     function promptApiKey() {
         const key = prompt("請輸入 OpenRouter API Key:", settings.apiKey);
         if (key !== null) { settings.apiKey = key.trim(); saveSettings(); alert("API Key 已儲存！"); }
@@ -189,7 +142,6 @@
         if (m !== null && m.trim() !== "") { settings.aiModel = m.trim(); saveSettings(); alert("AI 模型已更新！\n當前使用: " + settings.aiModel); }
     }
 
-    // --- 注入圖片按鈕 ---
     function injectImageControls() {
         const images = document.querySelectorAll('img[src*="/images2/"], img[src*="/images3/"]');
         images.forEach(img => {
@@ -223,7 +175,6 @@
         });
     }
 
-    // --- API 呼叫 ---
     async function translateAll() {
         if (!settings.apiKey) { promptApiKey(); if(!settings.apiKey) return; }
         const buttons = document.querySelectorAll('.mt-action-btn');
@@ -271,7 +222,12 @@
             const base64Data = base64DataUrl.split(',')[1];
             btn.innerText = 'AI 思考中...';
 
-            const promptText = `You are a professional manga translator. Extract all Japanese text from this manga page and translate it into Hong Kong style Traditional Chinese (書面語, written Chinese, strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺). Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks. Format: [{"ja": "Japanese text", "zh": "Chinese text"}]`;
+            const promptText = `
+                You are a professional manga translator.
+                Extract all Japanese text from this manga page and translate it into Hong Kong style Traditional Chinese (書面語, written Chinese, strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺).
+                Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks.
+                Format: [{"ja": "Japanese text", "zh": "Chinese text"}]
+            `;
 
             GM_xmlhttpRequest({
                 method: 'POST',
@@ -342,31 +298,31 @@
         wrapper.insertBefore(panel, wrapper.firstChild);
     }
 
-    // --- SPA 路由與生命週期管理 ---
-    function checkPageContext() {
+    // --- 初始化及定時器 (Timer-based SPA Handling) ---
+    updateGlobalStyles();
+    createControlPanel();
+
+    function checkUrlState() {
+        const isChapterPage = window.location.href.includes('-chapter-');
         const container = document.querySelector('.mt-container');
-        
-        if (isChapterPage()) {
-            // 如果是在漫畫閱讀頁
-            if (!container) createControlPanel();
-            else container.style.display = 'block'; // 確保面板顯示
-            injectImageControls(); // 嘗試為新載入的圖片加入按鈕
+
+        // 控制全局面板
+        if (container) {
+            container.style.display = isChapterPage ? 'block' : 'none';
+        }
+
+        if (isChapterPage) {
+            // 在漫畫頁面，注入按鈕並顯示所有元件
+            injectImageControls();
+            document.querySelectorAll('.mt-action-btn, .mt-panel').forEach(el => el.style.display = '');
         } else {
-            // 如果返回了目錄頁或其他非閱讀頁面
-            if (container) container.style.display = 'none'; // 隱藏面板
+            // 在非漫畫頁面，隱藏注入的翻譯按鈕及面板，不破壞原圖顯示
+            document.querySelectorAll('.mt-action-btn, .mt-panel').forEach(el => el.style.display = 'none');
         }
     }
 
-    updateGlobalStyles();
-
-    // 依賴 MutationObserver 不斷偵測 DOM 變化（完美解決 React/Next.js 的 Soft Reload）
-    const observer = new MutationObserver(() => {
-        checkPageContext();
-    });
-    
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    // 初始執行一次
-    checkPageContext();
+    // 每 1000ms 檢查一次 URL
+    setInterval(checkUrlState, 1000);
+    checkUrlState(); // 立即執行第一次
 
 })();
