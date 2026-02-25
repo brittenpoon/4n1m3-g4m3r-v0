@@ -41,24 +41,20 @@
     GM_addStyle(`
         #ai-translation-loader {
             position: fixed; top: 12%; left: 50%; transform: translateX(-50%);
-            background: rgba(15, 15, 15, 0.95); color: #fff; padding: 20px 35px;
+            background: rgba(10, 10, 10, 0.95); color: #fff; padding: 20px 35px;
             border-radius: 12px; font-size: 18px; z-index: 2000001; display: none;
             border: 1px solid #FFD700; pointer-events: none; text-align: center;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.8); line-height: 1.6;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.9); line-height: 1.6;
         }
         #ai-menu-popup { pointer-events: auto !important; z-index: 2000002; }
         body.hide-ai-subs .ai-translated-span, 
         body.hide-ai-subs .ai-translated-br { display: none !important; }
-        
-        .ai-translated-span { 
-            display: inline-block !important;
-            margin-top: 0.1em;
-        }
+        .ai-translated-span { display: inline-block !important; }
     `);
 
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
 
-    // --- 3. 效能與統計 ---
+    // --- 3. 效能預算 ---
     const getEstimatedTime = (lineCount) => {
         const stats = db.stats[db.activeModel];
         if (!stats || stats.totalLines === 0) return "計算中...";
@@ -75,7 +71,7 @@
         db.stats = allStats;
     };
 
-    // --- 4. 介面與智慧暫停 ---
+    // --- 4. UI 提示與智慧暫停 ---
     const toggleLoading = (isTranslating, lineCount = 0) => {
         window.isAITranslating = isTranslating;
         let loader = document.getElementById('ai-translation-loader');
@@ -94,22 +90,19 @@
                     <div style="font-weight:bold; color:#FFD700; margin-bottom:5px;">⏳ AI 字幕翻譯中...</div>
                     <div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div>
                     <div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div>
-                    <div style="font-size:12px; color:#888;">處理行數: ${lineCount}</div>
+                    <div style="font-size:11px; color:#888;">正在處理 ${lineCount} 行字幕</div>
                 `;
             }, 1000);
             loader.style.display = 'block';
 
             window.autoPauseTimer = setInterval(() => {
                 const video = document.querySelector('video');
-                const controls = document.querySelector('.watch-video--bottom-controls-container');
-                if (video && controls) {
-                    if (!video.paused) {
-                        const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
-                        if (pauseBtn) pauseBtn.click();
-                        else video.pause();
-                    } else {
-                        clearInterval(window.autoPauseTimer);
-                    }
+                if (video && !video.paused) {
+                    const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
+                    if (pauseBtn) pauseBtn.click();
+                    else video.pause();
+                } else if (video && video.paused) {
+                    clearInterval(window.autoPauseTimer);
                 }
             }, 500);
         } else {
@@ -157,7 +150,7 @@
                 model: db.activeModel,
                 messages: [{
                     role: "system",
-                    content: `你是一位影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語。`
+                    content: `你是一位影視翻譯員。翻譯成「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語（如 咗、嘅、喺、唔、佢）。`
                 }, {
                     role: "user",
                     content: indexedInput
@@ -186,7 +179,7 @@
         });
     }
 
-    // --- 6. 渲染邏輯 (縮放比例與置中修復) ---
+    // --- 6. 核心渲染 (0.8x 原文 + 1.0x 譯文 + 置中) ---
     const observer = new MutationObserver(() => {
         if (!db.isEnabled) return;
 
@@ -200,39 +193,40 @@
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
 
-                // 強制全置中排版
-                const style = window.getComputedStyle(outerSpan);
+                // 修正外層對齊：由 start 改為 center
+                outerSpan.style.textAlign = "center";
+
+                // 搵出所有非翻譯嘅原生 span (原文)
+                const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => !s.classList.contains('ai-translated-span'));
+                if (originalSpans.length === 0) return;
+
+                const firstOriginal = originalSpans[0];
+                const style = window.getComputedStyle(firstOriginal);
                 const isVertical = style.writingMode && style.writingMode.includes('vertical');
 
+                // 置中邏輯 (僅限橫排)
                 if (!isVertical) {
                     container.style.left = "50%";
                     container.style.transform = "translateX(-50%)";
                     container.style.whiteSpace = "nowrap";
-                    outerSpan.style.textAlign = "center"; // 修復為置中
                 }
 
-                // 處理原文縮放 (0.8x)
-                const allOriginalSpans = Array.from(outerSpan.querySelectorAll('span:not(.ai-translated-span)'));
-                const originalFontSize = parseFloat(style.fontSize);
-
-                allOriginalSpans.forEach((s, idx) => {
-                    // 如果原文有多行，最後一行(通常是第二行)保持原生大小，其餘 0.8
-                    if (allOriginalSpans.length > 1 && idx === allOriginalSpans.length - 1) {
-                        s.style.fontSize = originalFontSize + "px";
-                    } else {
-                        s.style.fontSize = (originalFontSize * 0.8) + "px";
-                    }
+                // A. 原文縮細至 0.8 倍 (處理所有原來的行)
+                const baseFontSize = parseFloat(style.fontSize);
+                originalSpans.forEach(s => {
+                    s.style.fontSize = (baseFontSize * 0.8) + "px";
                 });
 
-                // 插入譯文 Span (lang="zh")
+                // B. 插入換行
                 const br = document.createElement('br');
                 br.className = 'ai-translated-br';
                 outerSpan.appendChild(br);
 
-                const aiSpan = allOriginalSpans[0].cloneNode(true); // 複製原生樣式
+                // C. 插入翻譯 Span (維持 100% 大小，設定 lang="zh")
+                const aiSpan = firstOriginal.cloneNode(true);
                 aiSpan.classList.add('ai-translated-span');
-                aiSpan.setAttribute('lang', 'zh'); // 標記語言
-                aiSpan.style.fontSize = originalFontSize + "px"; // 譯文 100% 大細
+                aiSpan.setAttribute('lang', 'zh');
+                aiSpan.style.fontSize = baseFontSize + "px"; // 恢復 1.0 倍
                 aiSpan.innerText = translatedText;
                 
                 outerSpan.appendChild(aiSpan);
@@ -255,8 +249,8 @@
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
             <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 譯</button></div>
-            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(15,15,15,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕功能</label>
+            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型:</div>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free" ${db.modelType === 'free' ? 'checked' : ''}> Free (Arcee-AI)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (Gemini 2.5)</label>
