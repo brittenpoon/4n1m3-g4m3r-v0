@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4)
-// @version      2.0.4
+// @name         Netflix AI 雙語字幕 (v2.0.4.2)
+// @version      2.0.4.2
 // @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援、24 小時快取，並停用首頁預覽翻譯。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4';
+    const SCRIPT_VERSION = '2.0.4.2';
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
 
     // --- 1. Database & State ---
@@ -27,12 +27,13 @@
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
         get apiKey() { return GM_getValue('ai_sub_apikey', ''); },
         set apiKey(v) { GM_setValue('ai_sub_apikey', v); },
-        get modelType() { return GM_getValue('ai_model_type', 'free2'); },
+        get modelType() { return GM_getValue('ai_model_type', 'free1'); },
         set modelType(v) { GM_setValue('ai_model_type', v); },
         get customModel() { return GM_getValue('ai_custom_model', ''); },
         set customModel(v) { GM_setValue('ai_custom_model', v); },
         get activeModel() {
-            if (this.modelType === 'paid') return 'google/gemini-2.5-flash-lite-preview-09-2025';
+            if (this.modelType === 'paid1') return 'google/gemini-2.5-flash-lite-preview-09-2025';
+            if (this.modelType === 'paid2') return 'openai/gpt-5-nano';
             if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
             if (this.modelType === 'free1') return 'arcee-ai/trinity-large-preview:free';
             if (this.modelType === 'free2') return 'arcee-ai/trinity-mini:free';
@@ -375,7 +376,8 @@
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free1" ${db.modelType === 'free1' ? 'checked' : ''}> Free (trinity-large-preview)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free2" ${db.modelType === 'free2' ? 'checked' : ''}> Free (trinity-mini)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (gemini-2.5-flash-lite-preview)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid1' ? 'checked' : ''}> Paid (gemini-2.5-flash-lite-preview)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid2' ? 'checked' : ''}> Paid (gpt-5-nano)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
