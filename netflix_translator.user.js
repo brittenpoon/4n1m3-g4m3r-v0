@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4.1)
-// @version      2.0.4.1
-// @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援、24 小時快取，並停用首頁預覽翻譯。
+// @name         Netflix AI 雙語字幕 (v2.0.5)
+// @version      2.0.5
+// @description  支援 OpenRouter 及 SiliconFlow 雙平台，加入文字解鎖、JSON 輸出、Glossary 支援及 24 小時快取。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -9,29 +9,41 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      openrouter.ai
+// @connect      api.siliconflow.cn
 // @connect      github.com
 // @connect      raw.githubusercontent.com
 // ==/UserScript==
 
-//@ version 2.0.4.1
+//@ version 2.0.5
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4.1';
+    const SCRIPT_VERSION = '2.0.5';
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
 
     // --- 1. Database & State ---
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
-        get apiKey() { return GM_getValue('ai_sub_apikey', ''); },
-        set apiKey(v) { GM_setValue('ai_sub_apikey', v); },
         get modelType() { return GM_getValue('ai_model_type', 'free'); },
         set modelType(v) { GM_setValue('ai_model_type', v); },
+        
+        // OpenRouter Configs
+        get apiKey() { return GM_getValue('ai_sub_apikey', ''); },
+        set apiKey(v) { GM_setValue('ai_sub_apikey', v); },
         get customModel() { return GM_getValue('ai_custom_model', ''); },
         set customModel(v) { GM_setValue('ai_custom_model', v); },
-        get activeModel() {
+        
+        // SiliconFlow Configs
+        get siliconApiKey() { return GM_getValue('ai_silicon_apikey', ''); },
+        set siliconApiKey(v) { GM_setValue('ai_silicon_apikey', v); },
+        get siliconModel() { return GM_getValue('ai_silicon_model', ''); },
+        set siliconModel(v) { GM_setValue('ai_silicon_model', v); },
+        
+        // Dynamic Model Name
+        get activeModelName() {
+            if (this.modelType === 'siliconflow') return this.siliconModel || 'deepseek-ai/DeepSeek-V3';
             if (this.modelType === 'paid') return 'google/gemini-2.5-flash-lite-preview-09-2025';
             if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
             return 'arcee-ai/trinity-large-preview:free';
@@ -49,10 +61,10 @@
     const hashCode = (s) => s.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a }, 0).toString(36);
 
     function getCache(hashKey) {
-        let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModel, items: {} });
-
-        if (cache.version !== SCRIPT_VERSION || cache.model !== db.activeModel) {
-            cache = { version: SCRIPT_VERSION, model: db.activeModel, items: {} };
+        let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModelName, items: {} });
+        
+        if (cache.version !== SCRIPT_VERSION || cache.model !== db.activeModelName) {
+            cache = { version: SCRIPT_VERSION, model: db.activeModelName, items: {} };
             GM_setValue('ai_translation_cache', cache);
             return null;
         }
@@ -71,7 +83,7 @@
     }
 
     function setCache(hashKey, mapping) {
-        let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModel, items: {} });
+        let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModelName, items: {} });
         cache.items[hashKey] = { ts: Date.now(), mapping: mapping };
         GM_setValue('ai_translation_cache', cache);
     }
@@ -90,7 +102,7 @@
                             if (item.orig && item.trans) text += `- ${item.orig}: ${item.trans}\n`;
                         });
                         window.glossaryPrompt = text;
-                        console.log("%c[v2.0.4] Glossary Loaded", "color: #00FF00;");
+                        console.log("%c[v2.0.5] Glossary Loaded", "color: #00FF00;");
                     }
                 } catch (e) {}
             }
@@ -136,7 +148,7 @@
             fromCache: fromCache,
             translations: mapping
         };
-        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4)";
+        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.5)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.5)";
         console.groupCollapsed(title, "color: #00FFFF; font-weight: bold; font-size: 12px;");
         console.log(JSON.stringify(outputData, null, 2));
         console.groupEnd();
@@ -147,7 +159,7 @@
 
     const updateStats = (ms, lines) => {
         const allStats = db.stats;
-        const m = db.activeModel;
+        const m = db.activeModelName;
         if (!allStats[m]) allStats[m] = { totalTime: 0, totalLines: 0 };
         allStats[m].totalTime += ms;
         allStats[m].totalLines += lines;
@@ -155,7 +167,7 @@
     };
 
     const getEstimatedTime = (lineCount) => {
-        const stats = db.stats[db.activeModel];
+        const stats = db.stats[db.activeModelName];
         if (!stats || stats.totalLines === 0) return "計算中...";
         return Math.round(((stats.totalTime / stats.totalLines) * lineCount) / 1000) + " 秒";
     };
@@ -177,7 +189,7 @@
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
                 loader.innerHTML = `
                     <div style="font-weight:bold; color:#FFD700; margin-bottom:8px; font-size:20px;">⏳ 標籤隔離翻譯中 (Tag Isolation Mode)</div>
-                    <div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div>
+                    <div style="font-size:13px; color:#ccc;">模型: ${db.activeModelName.split('/').pop()}</div>
                     <div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div>
                     <div style="font-size:11px; color:#888;">正在嚴格對齊 ${totalLines} 行</div>
                 `;
@@ -209,11 +221,14 @@
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
-                if (!db.isEnabled || !db.apiKey) return;
-
-                // 【新增】如果喺首頁 (Browse) 就不作翻譯
-                if (window.location.pathname.startsWith('/browse')) return;
-
+                if (!db.isEnabled) return;
+                
+                // 檢查是否已設定對應平台嘅 API Key
+                const currentApiKey = db.modelType === 'siliconflow' ? db.siliconApiKey : db.apiKey;
+                if (!currentApiKey) return;
+                
+                if (window.location.pathname.startsWith('/browse')) return; 
+                
                 await processAndTranslate(this.responseText, url);
             });
         }
@@ -237,19 +252,19 @@
 
         const xmlHash = hashCode(rawXml);
         const cachedMapping = getCache(xmlHash);
-
+        
         if (cachedMapping) {
             window.subtitleMap.clear();
             cachedMapping.forEach(item => {
                 if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans);
             });
-            console.log("%c=== Netflix AI 命中緩存 (v2.0.4) ===", "color: #00FFFF; font-weight: bold;");
-            exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: 0 }, cachedMapping, true);
+            console.log("%c=== Netflix AI 命中緩存 (v2.0.5) ===", "color: #00FFFF; font-weight: bold;");
+            exportTranslationJSON({ model: db.activeModelName, lines: originalLines.length, duration: 0 }, cachedMapping, true);
             return;
         }
 
         const taggedInput = originalLines.map((line, idx) => `[${idx}] ${line} [/${idx}]`).join('\n');
-
+        
         let systemContent = `你是一位影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
                     【對位死命令：標籤隔離模式】
                     1. 你會收到格式為 "[id] 原文 [/id]" 的內容。
@@ -259,15 +274,20 @@
                     5. 符號、語氣詞、音樂符號必須保留 ID 標籤回傳。`;
         if (window.glossaryPrompt) systemContent += window.glossaryPrompt;
 
+        // 判定平台發送 API
+        const isSilicon = db.modelType === 'siliconflow';
+        const apiUrl = isSilicon ? "https://api.siliconflow.cn/v1/chat/completions" : "https://openrouter.ai/api/v1/chat/completions";
+        const currentApiKey = isSilicon ? db.siliconApiKey : db.apiKey;
+
         const reqStartTime = performance.now();
         toggleLoading(true, originalLines.length);
 
         GM_xmlhttpRequest({
             method: "POST",
-            url: "https://openrouter.ai/api/v1/chat/completions",
-            headers: { "Authorization": `Bearer ${db.apiKey}`, "Content-Type": "application/json" },
+            url: apiUrl,
+            headers: { "Authorization": `Bearer ${currentApiKey}`, "Content-Type": "application/json" },
             data: JSON.stringify({
-                model: db.activeModel,
+                model: db.activeModelName,
                 messages: [{ role: "system", content: systemContent }, { role: "user", content: taggedInput }]
             }),
             onload: function(res) {
@@ -278,7 +298,7 @@
 
                     window.subtitleMap.clear();
                     const exportMapping = [];
-
+                    
                     const lineRegex = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\/\1\]|\s*\[\d+\]|$)/g;
                     let match;
                     while ((match = lineRegex.exec(aiContent)) !== null) {
@@ -293,10 +313,10 @@
                         }
                     }
 
-                    console.log("%c=== Netflix AI API 翻譯完成 (v2.0.4) ===", "color: #00FF00; font-weight: bold;");
-                    exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
+                    console.log(`%c=== Netflix AI API 翻譯完成 (${isSilicon ? 'SiliconFlow' : 'OpenRouter'}) (v2.0.5) ===`, "color: #00FF00; font-weight: bold;");
+                    exportTranslationJSON({ model: db.activeModelName, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
-
+                    
                     setCache(xmlHash, exportMapping);
                 } finally { toggleLoading(false); }
             },
@@ -366,18 +386,31 @@
         const wrapper = document.createElement('div');
         wrapper.id = 'ai-subtitle-wrapper';
         wrapper.style.display = 'flex';
+        
+        // UI 判斷初始顯示狀態
+        const isOR = ['free', 'paid', 'custom'].includes(db.modelType);
+        const isORCustom = db.modelType === 'custom';
+        const isSilicon = db.modelType === 'siliconflow';
+
         wrapper.innerHTML = `
-            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4</button></div>
-            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
+            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.5</button></div>
+            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px; max-height:70vh; overflow-y:auto;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
-                <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
+                
+                <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">🌐 OpenRouter 模型:</div>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free" ${db.modelType === 'free' ? 'checked' : ''}> Free (Arcee-AI)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (Gemini 2.5)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
-                <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
-                <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom OpenRouter</label>
+                <input type="text" id="ai-custom-input" placeholder="OR Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; display:${isORCustom ? 'block' : 'none'};">
+                <input type="password" id="ai-api-input" placeholder="OpenRouter API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px; display:${isOR ? 'block' : 'none'};">
+                
+                <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">⚡ SiliconFlow 模型:</div>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="siliconflow" ${db.modelType === 'siliconflow' ? 'checked' : ''}> Custom SiliconFlow</label>
+                <input type="text" id="ai-silicon-model-input" placeholder="e.g. deepseek-ai/DeepSeek-V3" value="${db.siliconModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; display:${isSilicon ? 'block' : 'none'};">
+                <input type="password" id="ai-silicon-api-input" placeholder="SiliconFlow API Key" value="${db.siliconApiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px; display:${isSilicon ? 'block' : 'none'};">
+
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4</button>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.5</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
@@ -390,22 +423,37 @@
             e.stopPropagation();
             popup.style.display = popup.style.display === 'none' ? 'flex' : 'none';
         };
-
+        
         document.getElementById('ai-glossary-btn').onclick = (e) => {
             e.stopPropagation();
             window.open('https://github.com/brittenpoon/4n1m3-g4m3r-v0/blob/main/Glossary.json', '_blank');
         };
 
+        // 動態切換顯示邏輯
         document.querySelectorAll('input[name="ai-model"]').forEach(r => {
-            r.onchange = () => { document.getElementById('ai-custom-input').style.display = (r.value === 'custom') ? 'block' : 'none'; };
+            r.onchange = () => { 
+                const isORC = r.value === 'custom';
+                const isOR = ['free', 'paid', 'custom'].includes(r.value);
+                const isSF = r.value === 'siliconflow';
+
+                document.getElementById('ai-custom-input').style.display = isORC ? 'block' : 'none';
+                document.getElementById('ai-api-input').style.display = isOR ? 'block' : 'none';
+                
+                document.getElementById('ai-silicon-model-input').style.display = isSF ? 'block' : 'none';
+                document.getElementById('ai-silicon-api-input').style.display = isSF ? 'block' : 'none';
+            };
         });
+
         document.getElementById('ai-save-btn').onclick = () => {
             db.isEnabled = document.getElementById('ai-cb-enable').checked;
-            db.apiKey = document.getElementById('ai-api-input').value.trim();
             db.modelType = document.querySelector('input[name="ai-model"]:checked').value;
+            db.apiKey = document.getElementById('ai-api-input').value.trim();
             db.customModel = document.getElementById('ai-custom-input').value.trim();
+            db.siliconApiKey = document.getElementById('ai-silicon-api-input').value.trim();
+            db.siliconModel = document.getElementById('ai-silicon-model-input').value.trim();
             location.reload();
         };
+        
         document.addEventListener('click', (e) => { if (popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none'; });
     }
 })();
