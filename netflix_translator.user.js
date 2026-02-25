@@ -31,7 +31,6 @@
         set customModel(v) { GM_setValue('ai_custom_model', v); },
         get activeModel() {
             if (this.modelType === 'paid1') return 'google/gemini-2.5-flash-lite-preview-09-2025';
-            if (this.modelType === 'paid2') return 'openai/gpt-5-nano';
             if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
             if (this.modelType === 'free1') return 'arcee-ai/trinity-large-preview:free';
             if (this.modelType === 'free2') return 'arcee-ai/trinity-mini:free';
@@ -375,7 +374,6 @@
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free1" ${db.modelType === 'free1' ? 'checked' : ''}> Free (trinity-large-preview)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free2" ${db.modelType === 'free2' ? 'checked' : ''}> Free (trinity-mini)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid1" ${db.modelType === 'paid1' ? 'checked' : ''}> Paid (gemini-2.5-flash-lite-preview)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid2" ${db.modelType === 'paid2' ? 'checked' : ''}> Paid (gpt-5-nano)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
