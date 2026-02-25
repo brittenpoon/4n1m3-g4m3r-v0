@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v13 實體選單 + 模型顯示)
+// @name         Netflix AI 雙語字幕 (v16 智慧暫停 + 效能統計)
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    // --- 1. Database (確保持久化儲存) ---
+    // --- 1. Database & Settings ---
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
@@ -22,43 +22,54 @@
         get customModel() { return GM_getValue('ai_custom_model', ''); },
         set customModel(v) { GM_setValue('ai_custom_model', v); },
         get activeModel() {
-            if (this.modelType === 'paid') return 'google/gemini-2.0-flash-lite-preview-09-2025';
+            if (this.modelType === 'paid') return 'google/gemini-2.5-flash-lite-preview-09-2025';
             if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
             return 'arcee-ai/trinity-large-preview:free';
-        }
+        },
+        get stats() { return GM_getValue('ai_perf_stats', {}); },
+        set stats(v) { GM_setValue('ai_perf_stats', v); }
     };
 
     window.subtitleMap = new Map();
     window.isAITranslating = false;
+    window.autoPauseTimer = null;
 
     // --- 2. 樣式注入 ---
     GM_addStyle(`
         #ai-translation-loader {
             position: fixed; top: 12%; left: 50%; transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.9); color: #fff; padding: 15px 30px;
-            border-radius: 8px; font-size: 18px; z-index: 999999; display: none;
+            background: rgba(20, 20, 20, 0.95); color: #fff; padding: 20px 35px;
+            border-radius: 12px; font-size: 18px; z-index: 2000001; display: none;
             border: 1px solid #FFD700; pointer-events: none; text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8); line-height: 1.6;
         }
+        #ai-menu-popup { pointer-events: auto !important; z-index: 2000002; }
         body.hide-ai-subs .ai-translated-span, 
         body.hide-ai-subs .ai-translated-br { display: none !important; }
         .ai-translated-span { display: inline-block !important; }
     `);
 
-    const logger = (msg, data = '') => console.log(`[${new Date().toLocaleTimeString()}] [Netflix AI] ${msg}`, data);
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
 
-    if (!db.isEnabled) document.body.classList.add('hide-ai-subs');
-
-    // --- 3. 播放控制與 Loading 顯示 (顯示模型名) ---
-    const forceVideoState = (shouldPause) => {
-        const video = document.querySelector('video');
-        if (!video) return;
-        const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
-        if (shouldPause && pauseBtn) pauseBtn.click();
-        else if (!shouldPause && video.paused) video.play();
+    // --- 3. 效能計算 ---
+    const getEstimatedTime = (lineCount) => {
+        const stats = db.stats[db.activeModel];
+        if (!stats || stats.totalLines === 0) return "計算中...";
+        const avgPerLine = stats.totalTime / stats.totalLines;
+        return Math.round((avgPerLine * lineCount) / 1000) + " 秒";
     };
 
-    const toggleLoading = (isTranslating) => {
+    const updateStats = (ms, lines) => {
+        const allStats = db.stats;
+        const m = db.activeModel;
+        if (!allStats[m]) allStats[m] = { totalTime: 0, totalLines: 0 };
+        allStats[m].totalTime += ms;
+        allStats[m].totalLines += lines;
+        db.stats = allStats;
+    };
+
+    // --- 4. 智慧自動暫停邏輯 ---
+    const toggleLoading = (isTranslating, lineCount = 0) => {
         window.isAITranslating = isTranslating;
         let loader = document.getElementById('ai-translation-loader');
         if (!loader) {
@@ -66,23 +77,51 @@
             loader.id = 'ai-translation-loader';
             document.body.appendChild(loader);
         }
-        
-        // 顯示當前使用的模型名稱
-        const modelDisplay = db.activeModel.split('/').pop();
-        loader.innerHTML = `⏳ 正在翻譯中...<br><span style="font-size:12px; color:#aaa;">模型: ${modelDisplay}</span>`;
-        loader.style.display = isTranslating ? 'block' : 'none';
-        
+
         if (isTranslating) {
-            window.pauseInterval = setInterval(() => {
-                if (document.querySelector('.watch-video--bottom-controls-container')) forceVideoState(true);
+            const startTime = Date.now();
+            const est = getEstimatedTime(lineCount);
+            
+            // UI 計時器
+            window.uiTimer = setInterval(() => {
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
+                loader.innerHTML = `
+                    <div style="font-weight:bold; color:#FFD700; margin-bottom:5px;">⏳ AI 字幕翻譯中...</div>
+                    <div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div>
+                    <div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div>
+                    <div style="font-size:11px; color:#888;">正在處理 ${lineCount} 行</div>
+                `;
+            }, 1000);
+            loader.style.display = 'block';
+
+            // 智慧自動暫停：一旦成功暫停一次就停止，允許用戶手動覆蓋
+            window.autoPauseTimer = setInterval(() => {
+                const video = document.querySelector('video');
+                const controls = document.querySelector('.watch-video--bottom-controls-container');
+                if (video && controls) {
+                    if (!video.paused) {
+                        const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
+                        if (pauseBtn) pauseBtn.click();
+                        else video.pause();
+                    } else {
+                        // 偵測到已暫停，任務完成，停止暫停循環
+                        console.log("[Netflix AI] 首次自動暫停成功，交還控制權。");
+                        clearInterval(window.autoPauseTimer);
+                    }
+                }
             }, 500);
+
         } else {
-            clearInterval(window.pauseInterval);
-            setTimeout(() => forceVideoState(false), 500);
+            clearInterval(window.uiTimer);
+            clearInterval(window.autoPauseTimer);
+            loader.style.display = 'none';
+            // 翻譯完後恢復播放 (可選)
+            const playBtn = document.querySelector('[data-uia="control-play-pause-play"]');
+            if (playBtn) playBtn.click();
         }
     };
 
-    // --- 4. 攔截與 API 翻譯 ---
+    // --- 5. 攔截與 API 翻譯 ---
     const oldOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
@@ -107,7 +146,8 @@
         if (originalLines.length === 0) return;
 
         const indexedInput = originalLines.map((line, idx) => `[${idx}] ${line}`).join('\n');
-        toggleLoading(true);
+        const reqStartTime = performance.now();
+        toggleLoading(true, originalLines.length);
 
         GM_xmlhttpRequest({
             method: "POST",
@@ -117,7 +157,7 @@
                 model: db.activeModel,
                 messages: [{
                     role: "system",
-                    content: `你是一位影視翻譯員。翻譯成「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語。`
+                    content: `你是一位翻譯員。將字幕翻譯成「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語（如 咗、嘅、喺、唔、佢）。`
                 }, {
                     role: "user",
                     content: indexedInput
@@ -126,7 +166,12 @@
             onload: function(res) {
                 try {
                     const json = JSON.parse(res.responseText);
+                    if (!json.choices) throw new Error("API 回傳異常");
                     const aiLines = json.choices[0].message.content.split('\n');
+                    
+                    const duration = performance.now() - reqStartTime;
+                    updateStats(duration, originalLines.length);
+
                     window.subtitleMap.clear();
                     aiLines.forEach(line => {
                         const match = line.match(/^\[(\d+)\]\s*(.*)/);
@@ -137,13 +182,15 @@
                             if (orig) window.subtitleMap.set(getMatchKey(orig), trans);
                         }
                     });
+                } catch (e) {
+                    console.error("翻譯出錯，不計入統計。", e);
                 } finally { toggleLoading(false); }
             },
             onerror: () => toggleLoading(false)
         });
     }
 
-    // --- 5. 渲染邏輯 ---
+    // --- 6. 渲染邏輯 ---
     const observer = new MutationObserver(() => {
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
@@ -171,7 +218,7 @@
 
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
-    // --- 6. 選單 UI (修正儲存失效問題) ---
+    // --- 7. 選單介面 ---
     function injectControlMenu() {
         if (document.getElementById('ai-subtitle-wrapper')) return;
         const targetBtn = document.querySelector('[data-uia="control-audio-subtitle"]');
@@ -182,69 +229,47 @@
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
             <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 譯</button></div>
-            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(20,20,20,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:999999; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.8); font-size:14px;">
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕功能</label>
-                <div style="border-top: 1px solid #444; margin: 5px 0; padding-top: 10px;">模型選擇:</div>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model-choice" value="free" ${db.modelType === 'free' ? 'checked' : ''}> Free (Arcee-AI)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model-choice" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (Gemini 2.0)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model-choice" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
-                <input type="text" id="ai-custom-model-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
-                <div style="margin-top:5px;">OpenRouter API Key:</div>
-                <input type="password" id="ai-api-key-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%;">
-                <button id="ai-btn-save-action" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px;">儲存並套用</button>
+            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(15,15,15,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
+                <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型:</div>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free" ${db.modelType === 'free' ? 'checked' : ''}> Free (Arcee-AI)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (Gemini 2.5)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
+                <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
+                <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
         const spacer = document.createElement('div'); spacer.style = "min-width: 3rem; width: 3rem;";
         btnWrapper.parentNode.insertBefore(spacer, btnWrapper);
 
-        // 選單開關
+        const popup = document.getElementById('ai-menu-popup');
+        popup.addEventListener('click', (e) => e.stopPropagation());
+        popup.addEventListener('mousedown', (e) => e.stopPropagation());
+
         document.getElementById('ai-toggle-btn').onclick = (e) => {
             e.stopPropagation();
-            const popup = document.getElementById('ai-menu-popup');
             popup.style.display = popup.style.display === 'none' ? 'flex' : 'none';
         };
 
-        // Custom 輸入框顯示切換
-        document.querySelectorAll('input[name="ai-model-choice"]').forEach(r => {
-            r.onchange = () => {
-                document.getElementById('ai-custom-model-input').style.display = (r.value === 'custom') ? 'block' : 'none';
-            };
+        document.querySelectorAll('input[name="ai-model"]').forEach(r => {
+            r.onchange = () => { document.getElementById('ai-custom-input').style.display = (r.value === 'custom') ? 'block' : 'none'; };
         });
 
-        // 儲存邏輯 (Abort/Restart)
-        document.getElementById('ai-btn-save-action').onclick = () => {
-            const wasEnabled = db.isEnabled;
+        document.getElementById('ai-save-btn').onclick = () => {
             const oldModel = db.activeModel;
-
-            // 寫入 Database
             db.isEnabled = document.getElementById('ai-cb-enable').checked;
-            db.apiKey = document.getElementById('ai-api-key-input').value.trim();
-            db.modelType = document.querySelector('input[name="ai-model-choice"]:checked').value;
-            db.customModel = document.getElementById('ai-custom-model-input').value.trim();
+            db.apiKey = document.getElementById('ai-api-input').value.trim();
+            db.modelType = document.querySelector('input[name="ai-model"]:checked').value;
+            db.customModel = document.getElementById('ai-custom-input').value.trim();
 
-            // 1. 如果取消勾選 (Abort)
-            if (!db.isEnabled) {
-                document.body.classList.add('hide-ai-subs');
-                window.subtitleMap.clear();
-                toggleLoading(false);
-                logger("功能已停用，翻譯中斷。");
-            } else {
-                document.body.classList.remove('hide-ai-subs');
-                // 2. 如果模型變更或從關閉轉開啟 (Restart)
-                if (!wasEnabled || oldModel !== db.activeModel) {
-                    window.subtitleMap.clear();
-                    alert('設定已更新！由於模型已更換，建議重新整理頁面以觸發新翻譯。');
-                    location.reload();
-                }
-            }
-            document.getElementById('ai-menu-popup').style.display = 'none';
+            if (db.isEnabled && oldModel !== db.activeModel) location.reload();
+            else if (!db.isEnabled) document.body.classList.add('hide-ai-subs');
+            else document.body.classList.remove('hide-ai-subs');
+            popup.style.display = 'none';
         };
 
-        // 點擊空白處關閉
-        document.addEventListener('click', (e) => {
-            const popup = document.getElementById('ai-menu-popup');
-            if (popup && popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none';
-        });
+        document.addEventListener('click', (e) => { if (popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none'; });
     }
 })();
