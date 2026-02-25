@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         KLZ9 Manga Translator Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  OCR and translate manga pages using OpenRouter. Base v3.0 with simple timer-based SPA URL check.
+// @version      3.4
+// @description  OCR and translate manga pages. Improved AI Prompt for contextual and grouped bubble translation.
 // @match        https://klz9.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -57,9 +57,9 @@
                 overflow-y: auto;
                 flex-shrink: 0;
             }
-            .mt-row { margin-bottom: 12px; border-bottom: 1px dashed #ddd; padding-bottom: 8px; }
-            .mt-ja { color: #666; font-size: var(--mt-font-ja); line-height: 1.4; margin-bottom: 4px; }
-            .mt-zh { color: #000; font-weight: bold; font-size: var(--mt-font-zh); line-height: 1.5; }
+            .mt-row { margin-bottom: 15px; border-bottom: 1px dashed #ddd; padding-bottom: 10px; }
+            .mt-ja { color: #666; font-size: var(--mt-font-ja); line-height: 1.5; margin-bottom: 6px; }
+            .mt-zh { color: #000; font-weight: bold; font-size: var(--mt-font-zh); line-height: 1.6; }
             .mt-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; font-family: sans-serif; font-size: 13px; }
             .mt-control-panel { background: rgba(30, 41, 59, 0.95); color: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(5px); width: 260px; }
             .mt-btn { background: #4f46e5; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.2s; }
@@ -76,6 +76,7 @@
     }
 
     function createControlPanel() {
+        if (document.querySelector('.mt-container')) return; 
         const container = document.createElement('div');
         container.className = 'mt-container';
 
@@ -142,9 +143,18 @@
         if (m !== null && m.trim() !== "") { settings.aiModel = m.trim(); saveSettings(); alert("AI 模型已更新！\n當前使用: " + settings.aiModel); }
     }
 
+    function removeAds() {
+        const kofiLinks = document.querySelectorAll('a[href*="ko-fi.com"]');
+        kofiLinks.forEach(el => el.remove());
+    }
+
     function injectImageControls() {
-        const images = document.querySelectorAll('img[src*="/images2/"], img[src*="/images3/"]');
+        removeAds();
+
+        const images = document.querySelectorAll('img.max-w-3xl');
+        
         images.forEach(img => {
+            if (img.closest('a')) return;
             if (img.closest('.mt-wrapper')) return;
 
             const wrapper = document.createElement('div');
@@ -170,21 +180,26 @@
             btn.style.fontSize = '14px';
             btn.style.fontWeight = 'bold';
 
-            btn.onclick = () => processImage(img, wrapper, btn);
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                processImage(img, wrapper, btn);
+            };
             wrapper.appendChild(btn);
         });
     }
 
     async function translateAll() {
         if (!settings.apiKey) { promptApiKey(); if(!settings.apiKey) return; }
-        const buttons = document.querySelectorAll('.mt-action-btn');
+        
+        const buttons = Array.from(document.querySelectorAll('.mt-action-btn'));
         const btnAll = document.getElementById('mt-btn-all');
         btnAll.disabled = true;
         btnAll.innerText = "處理中...";
 
         let count = 0;
         for (const btn of buttons) {
-            if (btn.innerText === '翻譯此頁' && btn.style.display !== 'none') {
+            if (document.body.contains(btn) && btn.innerText === '翻譯此頁' && btn.style.display !== 'none') {
                 btn.click();
                 count++;
                 await new Promise(r => setTimeout(r, 1500));
@@ -222,11 +237,15 @@
             const base64Data = base64DataUrl.split(',')[1];
             btn.innerText = 'AI 思考中...';
 
+            // 強化版 Prompt：強制合併對話框句子，並利用全局語境
             const promptText = `
-                You are a professional manga translator.
-                Extract all Japanese text from this manga page and translate it into Hong Kong style Traditional Chinese (書面語, written Chinese, strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺).
-                Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks.
-                Format: [{"ja": "Japanese text", "zh": "Chinese text"}]
+                You are a professional manga translator. Follow these strict steps:
+                1. Read and analyze ALL text on the provided manga page to understand the full context, tone, and flow of the conversation.
+                2. Extract the Japanese text. IMPORTANT RULE: Group lines of text that belong to the same speech bubble, the same panel, or the same continuous thought into a SINGLE paragraph. Do NOT separate text line-by-line. (e.g., if a bubble has 3 lines of text, output them as one continuous string).
+                3. Translate the grouped text into Hong Kong style Traditional Chinese (書面語, written Chinese). Strictly NO spoken Cantonese characters like 嘅, 咁, 咗, 喺.
+                4. Ensure the translation makes logical sense based on the context of the entire page conversation.
+                5. Output ONLY a raw, valid JSON array of objects. Do not use markdown code blocks.
+                Format: [{"ja": "Grouped Japanese text (e.g. full bubble/panel)", "zh": "Natural contextual Chinese translation"}]
             `;
 
             GM_xmlhttpRequest({
@@ -257,7 +276,6 @@
                         console.error("Error:", e, response.responseText);
                         btn.innerText = '失敗 (點擊重試)';
                         btn.style.background = '#ef4444';
-                        btn.onclick = () => processImage(img, wrapper, btn);
                     }
                 },
                 onerror: function(err) {
@@ -298,31 +316,24 @@
         wrapper.insertBefore(panel, wrapper.firstChild);
     }
 
-    // --- 初始化及定時器 (Timer-based SPA Handling) ---
+    // --- 初始化及簡單定時器 (Timer) ---
     updateGlobalStyles();
-    createControlPanel();
 
     function checkUrlState() {
-        const isChapterPage = window.location.href.includes('-chapter-');
-        const container = document.querySelector('.mt-container');
-
-        // 控制全局面板
-        if (container) {
-            container.style.display = isChapterPage ? 'block' : 'none';
-        }
-
+        const isChapterPage = window.location.href.includes('-chapter-') && window.location.href.includes('.html');
+        
         if (isChapterPage) {
-            // 在漫畫頁面，注入按鈕並顯示所有元件
+            createControlPanel();
+            document.querySelector('.mt-container').style.display = 'block';
             injectImageControls();
             document.querySelectorAll('.mt-action-btn, .mt-panel').forEach(el => el.style.display = '');
         } else {
-            // 在非漫畫頁面，隱藏注入的翻譯按鈕及面板，不破壞原圖顯示
-            document.querySelectorAll('.mt-action-btn, .mt-panel').forEach(el => el.style.display = 'none');
+            const container = document.querySelector('.mt-container');
+            if (container) container.style.display = 'none';
         }
     }
 
-    // 每 1000ms 檢查一次 URL
-    setInterval(checkUrlState, 1000);
-    checkUrlState(); // 立即執行第一次
+    setInterval(checkUrlState, 1500);
+    checkUrlState();
 
 })();
