@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 雙語字幕 (v2.0.4.2)
-// @version      2.0.4.2
+// @version      2.0.4.3
 // @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援、24 小時快取，並停用首頁預覽翻譯。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4.2';
+    const SCRIPT_VERSION = '2.0.4.3';
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
 
     // --- 1. Database & State ---
@@ -250,13 +250,14 @@
 
         const taggedInput = originalLines.map((line, idx) => `[${idx}] ${line} [/${idx}]`).join('\n');
 
-        let systemContent = `你是一位影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
-                    【對位死命令：標籤隔離模式】
-                    1. 你會收到格式為 "[id] 原文 [/id]" 的內容。
-                    2. 必須 1:1 對應每個 ID，禁止合併 ID，禁止跳過。
-                    3. 譯文必須被 ID 標籤包圍，格式："[id] 譯文 [/id]"。
-                    4. 嚴禁因為語法連貫而將下一行的語意提前。每一組標籤是一個獨立的資料包。
-                    5. 符號、語氣詞、音樂符號必須保留 ID 標籤回傳。`;
+        let systemContent = `你是一位專業影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
+                            【對位死命令：原子化標籤隔離模式】
+                            1. 你會收到格式為 "[id] 原文 [/id]" 的獨立資料包。
+                            2. **嚴格禁止跨標籤翻譯**：每個標籤內的原文必須「獨立且完整」地在該標籤內翻譯，嚴禁將下一行 ID 的語意提前或合併。
+                            3. **嚴格禁止譯文留空**：即使原文只有一個字或符號，也必須回傳譯文。
+                            4. **1:1 結構對應**：輸入有 N 組標籤，輸出必須精確回傳 N 組標籤，序號 ID 必須完全一致。
+                            5. **語意截斷**：如果原文在一行內未完（例如有 ⸺ 符號），請在該 ID 內保留譯文的未完感，絕不可私自去後面 ID 偷取答案來補全。
+                            6. 格式範例："[id] 譯文 [/id]"。`;
         if (window.glossaryPrompt) systemContent += window.glossaryPrompt;
 
         const reqStartTime = performance.now();
