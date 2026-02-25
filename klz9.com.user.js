@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KLZ9 Manga Translator Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.4.1
 // @description  OCR and translate manga pages. Improved AI Prompt for contextual and grouped bubble translation.
 // @match        https://klz9.com/*
 // @grant        GM_xmlhttpRequest
