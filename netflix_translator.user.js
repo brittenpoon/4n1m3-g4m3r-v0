@@ -374,8 +374,8 @@
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free1" ${db.modelType === 'free1' ? 'checked' : ''}> Free (trinity-large-preview)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free2" ${db.modelType === 'free2' ? 'checked' : ''}> Free (trinity-mini)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid1' ? 'checked' : ''}> Paid (gemini-2.5-flash-lite-preview)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid2' ? 'checked' : ''}> Paid (gpt-5-nano)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid1" ${db.modelType === 'paid1' ? 'checked' : ''}> Paid (gemini-2.5-flash-lite-preview)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid2" ${db.modelType === 'paid2' ? 'checked' : ''}> Paid (gpt-5-nano)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
