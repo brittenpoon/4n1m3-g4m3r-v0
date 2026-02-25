@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         KLZ9 Manga Translator Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  OCR and translate manga pages using OpenRouter Gemini API with persistent settings, global controls, and minimizable UI.
 // @match        https://klz9.com/*chapter*.html
 // @grant        GM_xmlhttpRequest
