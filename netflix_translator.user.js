@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.3)
-// @version      2.0.3
-// @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援及 24 小時快取 (Cache)。
+// @name         Netflix AI 雙語字幕 (v2.0.4)
+// @version      2.0.4
+// @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援、24 小時快取，並停用首頁預覽翻譯。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -13,12 +13,12 @@
 // @connect      raw.githubusercontent.com
 // ==/UserScript==
 
-//@ version 2.0.3
+//@ version 2.0.4
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.3';
+    const SCRIPT_VERSION = '2.0.4';
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
 
     // --- 1. Database & State ---
@@ -46,20 +46,17 @@
     window.glossaryPrompt = "";
 
     // --- 2. 緩存機制 (Cache System) ---
-    // 生成字串 Hash 嚟避開 Netflix URL 嘅過期 Token 影響
     const hashCode = (s) => s.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a }, 0).toString(36);
 
     function getCache(hashKey) {
         let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModel, items: {} });
         
-        // 如果版本或模型改變，清空舊 Cache
         if (cache.version !== SCRIPT_VERSION || cache.model !== db.activeModel) {
             cache = { version: SCRIPT_VERSION, model: db.activeModel, items: {} };
             GM_setValue('ai_translation_cache', cache);
             return null;
         }
 
-        // 清理超時 (24 小時) 數據
         let isDirty = false;
         const now = Date.now();
         for (const key in cache.items) {
@@ -93,7 +90,7 @@
                             if (item.orig && item.trans) text += `- ${item.orig}: ${item.trans}\n`;
                         });
                         window.glossaryPrompt = text;
-                        console.log("%c[v2.0.3] Glossary Loaded", "color: #00FF00;");
+                        console.log("%c[v2.0.4] Glossary Loaded", "color: #00FF00;");
                     }
                 } catch (e) {}
             }
@@ -139,7 +136,7 @@
             fromCache: fromCache,
             translations: mapping
         };
-        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.3)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.3)";
+        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4)";
         console.groupCollapsed(title, "color: #00FFFF; font-weight: bold; font-size: 12px;");
         console.log(JSON.stringify(outputData, null, 2));
         console.groupEnd();
@@ -213,6 +210,10 @@
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
                 if (!db.isEnabled || !db.apiKey) return;
+                
+                // 【新增】如果喺首頁 (Browse) 就不作翻譯
+                if (window.location.pathname.startsWith('/browse')) return; 
+                
                 await processAndTranslate(this.responseText, url);
             });
         }
@@ -234,7 +235,6 @@
 
         if (originalLines.length === 0) return;
 
-        // 【Cache 檢查】
         const xmlHash = hashCode(rawXml);
         const cachedMapping = getCache(xmlHash);
         
@@ -243,9 +243,9 @@
             cachedMapping.forEach(item => {
                 if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans);
             });
-            console.log("%c=== Netflix AI 命中緩存 (v2.0.3) ===", "color: #00FFFF; font-weight: bold;");
+            console.log("%c=== Netflix AI 命中緩存 (v2.0.4) ===", "color: #00FFFF; font-weight: bold;");
             exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: 0 }, cachedMapping, true);
-            return; // 命中緩存，直接結束，不消耗 API
+            return;
         }
 
         const taggedInput = originalLines.map((line, idx) => `[${idx}] ${line} [/${idx}]`).join('\n');
@@ -293,11 +293,10 @@
                         }
                     }
 
-                    console.log("%c=== Netflix AI API 翻譯完成 (v2.0.3) ===", "color: #00FF00; font-weight: bold;");
+                    console.log("%c=== Netflix AI API 翻譯完成 (v2.0.4) ===", "color: #00FF00; font-weight: bold;");
                     exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
                     
-                    // 【寫入 Cache】
                     setCache(xmlHash, exportMapping);
                 } finally { toggleLoading(false); }
             },
@@ -368,7 +367,7 @@
         wrapper.id = 'ai-subtitle-wrapper';
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
-            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.3</button></div>
+            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
@@ -378,7 +377,7 @@
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.3</button>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
