@@ -1,5 +1,6 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v16 智慧暫停 + 效能統計)
+// @name         Netflix AI 雙語字幕 (v1.18.0)
+// @version      1.18.0
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
@@ -7,6 +8,8 @@
 // @grant        GM_setValue
 // @connect      openrouter.ai
 // ==/UserScript==
+
+//@ version 1.18.0
 
 (function() {
     'use strict';
@@ -38,7 +41,7 @@
     GM_addStyle(`
         #ai-translation-loader {
             position: fixed; top: 12%; left: 50%; transform: translateX(-50%);
-            background: rgba(20, 20, 20, 0.95); color: #fff; padding: 20px 35px;
+            background: rgba(15, 15, 15, 0.95); color: #fff; padding: 20px 35px;
             border-radius: 12px; font-size: 18px; z-index: 2000001; display: none;
             border: 1px solid #FFD700; pointer-events: none; text-align: center;
             box-shadow: 0 10px 30px rgba(0,0,0,0.8); line-height: 1.6;
@@ -46,12 +49,16 @@
         #ai-menu-popup { pointer-events: auto !important; z-index: 2000002; }
         body.hide-ai-subs .ai-translated-span, 
         body.hide-ai-subs .ai-translated-br { display: none !important; }
-        .ai-translated-span { display: inline-block !important; }
+        
+        .ai-translated-span { 
+            display: inline-block !important;
+            margin-top: 0.1em;
+        }
     `);
 
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
 
-    // --- 3. 效能計算 ---
+    // --- 3. 效能與統計 ---
     const getEstimatedTime = (lineCount) => {
         const stats = db.stats[db.activeModel];
         if (!stats || stats.totalLines === 0) return "計算中...";
@@ -68,7 +75,7 @@
         db.stats = allStats;
     };
 
-    // --- 4. 智慧自動暫停邏輯 ---
+    // --- 4. 介面與智慧暫停 ---
     const toggleLoading = (isTranslating, lineCount = 0) => {
         window.isAITranslating = isTranslating;
         let loader = document.getElementById('ai-translation-loader');
@@ -81,20 +88,17 @@
         if (isTranslating) {
             const startTime = Date.now();
             const est = getEstimatedTime(lineCount);
-            
-            // UI 計時器
             window.uiTimer = setInterval(() => {
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
                 loader.innerHTML = `
                     <div style="font-weight:bold; color:#FFD700; margin-bottom:5px;">⏳ AI 字幕翻譯中...</div>
                     <div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div>
                     <div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div>
-                    <div style="font-size:11px; color:#888;">正在處理 ${lineCount} 行</div>
+                    <div style="font-size:12px; color:#888;">處理行數: ${lineCount}</div>
                 `;
             }, 1000);
             loader.style.display = 'block';
 
-            // 智慧自動暫停：一旦成功暫停一次就停止，允許用戶手動覆蓋
             window.autoPauseTimer = setInterval(() => {
                 const video = document.querySelector('video');
                 const controls = document.querySelector('.watch-video--bottom-controls-container');
@@ -104,18 +108,14 @@
                         if (pauseBtn) pauseBtn.click();
                         else video.pause();
                     } else {
-                        // 偵測到已暫停，任務完成，停止暫停循環
-                        console.log("[Netflix AI] 首次自動暫停成功，交還控制權。");
                         clearInterval(window.autoPauseTimer);
                     }
                 }
             }, 500);
-
         } else {
             clearInterval(window.uiTimer);
             clearInterval(window.autoPauseTimer);
             loader.style.display = 'none';
-            // 翻譯完後恢復播放 (可選)
             const playBtn = document.querySelector('[data-uia="control-play-pause-play"]');
             if (playBtn) playBtn.click();
         }
@@ -157,7 +157,7 @@
                 model: db.activeModel,
                 messages: [{
                     role: "system",
-                    content: `你是一位翻譯員。將字幕翻譯成「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語（如 咗、嘅、喺、唔、佢）。`
+                    content: `你是一位影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語。`
                 }, {
                     role: "user",
                     content: indexedInput
@@ -166,9 +166,7 @@
             onload: function(res) {
                 try {
                     const json = JSON.parse(res.responseText);
-                    if (!json.choices) throw new Error("API 回傳異常");
                     const aiLines = json.choices[0].message.content.split('\n');
-                    
                     const duration = performance.now() - reqStartTime;
                     updateStats(duration, originalLines.length);
 
@@ -182,33 +180,61 @@
                             if (orig) window.subtitleMap.set(getMatchKey(orig), trans);
                         }
                     });
-                } catch (e) {
-                    console.error("翻譯出錯，不計入統計。", e);
                 } finally { toggleLoading(false); }
             },
             onerror: () => toggleLoading(false)
         });
     }
 
-    // --- 6. 渲染邏輯 ---
+    // --- 6. 渲染邏輯 (縮放比例與置中修復) ---
     const observer = new MutationObserver(() => {
+        if (!db.isEnabled) return;
+
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
+
             const currentMatchKey = getMatchKey(container.innerText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
+
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
-                const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
-                if (!innerSpan) return;
 
+                // 強制全置中排版
+                const style = window.getComputedStyle(outerSpan);
+                const isVertical = style.writingMode && style.writingMode.includes('vertical');
+
+                if (!isVertical) {
+                    container.style.left = "50%";
+                    container.style.transform = "translateX(-50%)";
+                    container.style.whiteSpace = "nowrap";
+                    outerSpan.style.textAlign = "center"; // 修復為置中
+                }
+
+                // 處理原文縮放 (0.8x)
+                const allOriginalSpans = Array.from(outerSpan.querySelectorAll('span:not(.ai-translated-span)'));
+                const originalFontSize = parseFloat(style.fontSize);
+
+                allOriginalSpans.forEach((s, idx) => {
+                    // 如果原文有多行，最後一行(通常是第二行)保持原生大小，其餘 0.8
+                    if (allOriginalSpans.length > 1 && idx === allOriginalSpans.length - 1) {
+                        s.style.fontSize = originalFontSize + "px";
+                    } else {
+                        s.style.fontSize = (originalFontSize * 0.8) + "px";
+                    }
+                });
+
+                // 插入譯文 Span (lang="zh")
                 const br = document.createElement('br');
                 br.className = 'ai-translated-br';
                 outerSpan.appendChild(br);
 
-                const aiSpan = innerSpan.cloneNode(true);
+                const aiSpan = allOriginalSpans[0].cloneNode(true); // 複製原生樣式
                 aiSpan.classList.add('ai-translated-span');
+                aiSpan.setAttribute('lang', 'zh'); // 標記語言
+                aiSpan.style.fontSize = originalFontSize + "px"; // 譯文 100% 大細
                 aiSpan.innerText = translatedText;
+                
                 outerSpan.appendChild(aiSpan);
                 container.dataset.aiTranslated = "true";
             }
@@ -218,7 +244,7 @@
 
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
-    // --- 7. 選單介面 ---
+    // --- 7. 選單 UI ---
     function injectControlMenu() {
         if (document.getElementById('ai-subtitle-wrapper')) return;
         const targetBtn = document.querySelector('[data-uia="control-audio-subtitle"]');
@@ -230,7 +256,7 @@
         wrapper.innerHTML = `
             <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 譯</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(15,15,15,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕功能</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型:</div>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free" ${db.modelType === 'free' ? 'checked' : ''}> Free (Arcee-AI)</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (Gemini 2.5)</label>
