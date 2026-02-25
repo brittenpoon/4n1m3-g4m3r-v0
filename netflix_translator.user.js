@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v11 Debug & New Span)
+// @name         Netflix AI 雙語字幕 (v12 模型切換 + 即時儲存)
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
@@ -16,7 +16,17 @@
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
         get apiKey() { return GM_getValue('ai_sub_apikey', ''); },
-        set apiKey(v) { GM_setValue('ai_sub_apikey', v); }
+        set apiKey(v) { GM_setValue('ai_sub_apikey', v); },
+        get modelType() { return GM_getValue('ai_model_type', 'free'); }, // 'free', 'paid', 'custom'
+        set modelType(v) { GM_setValue('ai_model_type', v); },
+        get customModel() { return GM_getValue('ai_custom_model', ''); },
+        set customModel(v) { GM_setValue('ai_custom_model', v); },
+        // 根據選擇回傳實際 Model ID
+        get activeModel() {
+            if (this.modelType === 'paid') return 'google/gemini-2.5-flash-lite-preview-09-2025';
+            if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
+            return 'arcee-ai/trinity-large-preview:free';
+        }
     };
 
     window.subtitleMap = new Map();
@@ -30,13 +40,16 @@
             border-radius: 8px; font-size: 18px; z-index: 999999; display: none;
             border: 1px solid #FFD700; pointer-events: none;
         }
-        body.hide-ai-subs .ai-translated-span { display: none !important; }
-        /* 確保新 Span 換行顯示 */
+        body.hide-ai-subs .ai-translated-span, 
+        body.hide-ai-subs .ai-translated-br { display: none !important; }
         .ai-translated-span { display: inline-block !important; }
     `);
 
     const logger = (msg, data = '') => console.log(`[${new Date().toLocaleTimeString()}] [Netflix AI] ${msg}`, data);
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
+
+    // 初始化狀態
+    if (!db.isEnabled) document.body.classList.add('hide-ai-subs');
 
     // --- 3. 播放控制 (Auto-pause) ---
     const forceVideoState = (shouldPause) => {
@@ -57,7 +70,7 @@
             document.body.appendChild(loader);
         }
         loader.style.display = isTranslating ? 'block' : 'none';
-
+        
         if (isTranslating) {
             window.pauseInterval = setInterval(() => {
                 if (document.querySelector('.watch-video--bottom-controls-container')) forceVideoState(true);
@@ -68,7 +81,7 @@
         }
     };
 
-    // --- 4. 攔截與 API 翻譯 (帶 JSON Log) ---
+    // --- 4. 攔截與 API 翻譯 ---
     const oldOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
@@ -84,33 +97,28 @@
         const parser = new DOMParser();
         const doc = parser.parseFromString(rawXml, "text/xml");
         const pTags = Array.from(doc.querySelectorAll('p'));
-
+        
         const originalLines = pTags.map(p => {
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = p.innerHTML.replace(/<br\s*\/?>/gi, ' ');
             return tempDiv.textContent.trim();
         }).filter(t => t.length > 0);
-
+        
         if (originalLines.length === 0) return;
 
-        // 索引標記 (後台對齊用)
         const indexedInput = originalLines.map((line, idx) => `[${idx}] ${line}`).join('\n');
-
         toggleLoading(true);
+        logger(`使用模型: ${db.activeModel} 進行翻譯...`);
 
         GM_xmlhttpRequest({
             method: "POST",
             url: "https://openrouter.ai/api/v1/chat/completions",
             headers: { "Authorization": `Bearer ${db.apiKey}`, "Content-Type": "application/json" },
             data: JSON.stringify({
-                model: "google/gemini-2.0-flash-001",
+                model: db.activeModel,
                 messages: [{
                     role: "system",
-                    content: `你是一位影視翻譯員。翻譯成「標準香港繁體中文（書面語）」。
-                    【規則】
-                    1. 每行必須以 [編號] 開頭，例如 "[0] 譯文"。
-                    2. 嚴禁廣東話口語（唔好用：咗、嘅、喺、唔、佢）。
-                    3. 必須對齊行數，即使是符號也回傳編號。`
+                    content: `你是一位影視翻譯員。翻譯成「標準香港繁體中文（書面語）」。嚴格遵守 [編號] 格式。嚴禁廣東話口語（如：咗、嘅、喺、唔、佢）。`
                 }, {
                     role: "user",
                     content: indexedInput
@@ -120,38 +128,31 @@
                 try {
                     const json = JSON.parse(res.responseText);
                     const aiLines = json.choices[0].message.content.split('\n');
-
                     window.subtitleMap.clear();
-                    const debugLog = { stats: { original: originalLines.length, aiReceived: aiLines.length }, mapping: [] };
+                    const debugLog = { stats: { model: db.activeModel, lines: originalLines.length }, mapping: [] };
 
                     aiLines.forEach(line => {
                         const match = line.match(/^\[(\d+)\]\s*(.*)/);
                         if (match) {
                             const idx = parseInt(match[1]);
-                            const translatedText = match[2].replace(/^\[\d+\]\s*/, '').trim(); // 雙重保險移除編號
-                            const originalText = originalLines[idx];
-                            if (originalText) {
-                                window.subtitleMap.set(getMatchKey(originalText), translatedText);
-                                debugLog.mapping.push({ id: idx, orig: originalText, trans: translatedText });
+                            const trans = match[2].replace(/^\[\d+\]\s*/, '').trim();
+                            const orig = originalLines[idx];
+                            if (orig) {
+                                window.subtitleMap.set(getMatchKey(orig), trans);
+                                debugLog.mapping.push({ id: idx, orig, trans });
                             }
                         }
                     });
-
-                    // 輸出 Debug JSON
-                    console.log("%c=== Netflix AI Debug Mapping ===", "color: #00FF00; font-weight: bold;");
+                    console.log("%c=== Netflix AI Debug Mapping ===", "color: #00FF00;");
                     console.log(JSON.stringify(debugLog, null, 2));
-                    console.log("%c===============================", "color: #00FF00; font-weight: bold;");
-
                 } finally { toggleLoading(false); }
             },
             onerror: () => toggleLoading(false)
         });
     }
 
-    // --- 5. 渲染邏輯 (New Span + BR) ---
+    // --- 5. 渲染邏輯 ---
     const observer = new MutationObserver(() => {
-        if (!db.isEnabled) return;
-
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
 
@@ -161,31 +162,27 @@
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
-
-                // 搵原生帶 Style 嘅內層 Span
                 const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
                 if (!innerSpan) return;
 
-                // 1. 插入原生樣式的 <br> (Netflix 有時 <br> 都帶 style)
                 const br = document.createElement('br');
+                br.className = 'ai-translated-br';
                 outerSpan.appendChild(br);
 
-                // 2. 建立全新的 Span 並 Clone 原生樣式
                 const aiSpan = innerSpan.cloneNode(true);
                 aiSpan.classList.add('ai-translated-span');
-                aiSpan.innerText = translatedText; // 絕對唔會帶編號
-
+                aiSpan.innerText = translatedText;
+                
                 outerSpan.appendChild(aiSpan);
                 container.dataset.aiTranslated = "true";
             }
         });
-
         injectControlMenu();
     });
 
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
-    // --- 6. 選單 UI (略，同之前一樣) ---
+    // --- 6. 選單 UI (即時更新) ---
     function injectControlMenu() {
         if (document.getElementById('ai-subtitle-wrapper')) return;
         const targetBtn = document.querySelector('[data-uia="control-audio-subtitle"]');
@@ -196,25 +193,49 @@
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
             <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 譯</button></div>
-            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(20,20,20,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:280px; flex-direction:column; gap:12px; z-index:999999; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.8);">
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 翻譯</label>
-                <input type="password" id="ai-input-key" placeholder="API Key" value="${db.apiKey}" style="padding:10px; background:#333; color:white; border:1px solid #555; width:100%;">
-                <button id="ai-btn-save" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold;">儲存</button>
+            <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(20,20,20,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:999999; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.8); font-size:14px;">
+                <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕功能</label>
+                <div style="border-top: 1px solid #444; margin: 5px 0; padding-top: 10px;">模型選擇:</div>
+                <label style="display:flex; gap:8px;"><input type="radio" name="model" value="free" ${db.modelType === 'free' ? 'checked' : ''}> Free (arcee-ai)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="model" value="paid" ${db.modelType === 'paid' ? 'checked' : ''}> Paid (Gemini 2.5)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
+                <input type="text" id="ai-custom-model" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
+                <div style="margin-top:5px;">OpenRouter API Key:</div>
+                <input type="password" id="ai-input-key" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%;">
+                <button id="ai-btn-save" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px;">儲存並立即生效</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
         const spacer = document.createElement('div'); spacer.style = "min-width: 3rem; width: 3rem;";
         btnWrapper.parentNode.insertBefore(spacer, btnWrapper);
 
+        // UI 互動邏輯
         document.getElementById('ai-toggle-btn').onclick = (e) => {
             e.stopPropagation();
             const popup = document.getElementById('ai-menu-popup');
             popup.style.display = popup.style.display === 'none' ? 'flex' : 'none';
         };
+
+        const customRadio = document.querySelectorAll('input[name="model"]');
+        customRadio.forEach(r => r.onchange = () => {
+            document.getElementById('ai-custom-model').style.display = (r.value === 'custom') ? 'block' : 'none';
+        });
+
         document.getElementById('ai-btn-save').onclick = () => {
             db.isEnabled = document.getElementById('ai-cb-enable').checked;
             db.apiKey = document.getElementById('ai-input-key').value.trim();
-            location.reload();
+            db.modelType = document.querySelector('input[name="model"]:checked').value;
+            db.customModel = document.getElementById('ai-custom-model').value.trim();
+            
+            // 即時反應
+            document.body.classList.toggle('hide-ai-subs', !db.isEnabled);
+            document.getElementById('ai-menu-popup').style.display = 'none';
+            logger("設定已即時更新，無需重新整理。");
         };
+
+        document.addEventListener('click', (e) => {
+            const popup = document.getElementById('ai-menu-popup');
+            if (popup && popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none';
+        });
     }
 })();
