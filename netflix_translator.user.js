@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4';
+    const SCRIPT_VERSION = '2.0.4.1';
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
 
     // --- 1. Database & State ---
@@ -34,7 +34,7 @@
         get activeModel() {
             if (this.modelType === 'paid') return 'google/gemini-2.5-flash-lite-preview-09-2025';
             if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
-            return 'arcee-ai/trinity-large-preview:free';
+            return 'arcee-ai/trinity-mini:free';
         },
         get stats() { return GM_getValue('ai_perf_stats', {}); },
         set stats(v) { GM_setValue('ai_perf_stats', v); }
@@ -50,7 +50,7 @@
 
     function getCache(hashKey) {
         let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModel, items: {} });
-        
+
         if (cache.version !== SCRIPT_VERSION || cache.model !== db.activeModel) {
             cache = { version: SCRIPT_VERSION, model: db.activeModel, items: {} };
             GM_setValue('ai_translation_cache', cache);
@@ -210,10 +210,10 @@
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
                 if (!db.isEnabled || !db.apiKey) return;
-                
+
                 // 【新增】如果喺首頁 (Browse) 就不作翻譯
-                if (window.location.pathname.startsWith('/browse')) return; 
-                
+                if (window.location.pathname.startsWith('/browse')) return;
+
                 await processAndTranslate(this.responseText, url);
             });
         }
@@ -237,7 +237,7 @@
 
         const xmlHash = hashCode(rawXml);
         const cachedMapping = getCache(xmlHash);
-        
+
         if (cachedMapping) {
             window.subtitleMap.clear();
             cachedMapping.forEach(item => {
@@ -249,7 +249,7 @@
         }
 
         const taggedInput = originalLines.map((line, idx) => `[${idx}] ${line} [/${idx}]`).join('\n');
-        
+
         let systemContent = `你是一位影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
                     【對位死命令：標籤隔離模式】
                     1. 你會收到格式為 "[id] 原文 [/id]" 的內容。
@@ -278,7 +278,7 @@
 
                     window.subtitleMap.clear();
                     const exportMapping = [];
-                    
+
                     const lineRegex = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\/\1\]|\s*\[\d+\]|$)/g;
                     let match;
                     while ((match = lineRegex.exec(aiContent)) !== null) {
@@ -296,7 +296,7 @@
                     console.log("%c=== Netflix AI API 翻譯完成 (v2.0.4) ===", "color: #00FF00; font-weight: bold;");
                     exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
-                    
+
                     setCache(xmlHash, exportMapping);
                 } finally { toggleLoading(false); }
             },
@@ -390,7 +390,7 @@
             e.stopPropagation();
             popup.style.display = popup.style.display === 'none' ? 'flex' : 'none';
         };
-        
+
         document.getElementById('ai-glossary-btn').onclick = (e) => {
             e.stopPropagation();
             window.open('https://github.com/brittenpoon/4n1m3-g4m3r-v0/blob/main/Glossary.json', '_blank');
