@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4)
-// @version      2.0.4
+// @name         Netflix AI 雙語字幕 (v2.0.4.1)
+// @version      2.0.4.1
 // @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援、24 小時快取，並停用首頁預覽翻譯。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -13,7 +13,7 @@
 // @connect      raw.githubusercontent.com
 // ==/UserScript==
 
-//@ version 2.0.4
+//@ version 2.0.4.1
 
 (function() {
     'use strict';
@@ -34,7 +34,7 @@
         get activeModel() {
             if (this.modelType === 'paid') return 'google/gemini-2.5-flash-lite-preview-09-2025';
             if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
-            return 'arcee-ai/trinity-mini:free';
+            return 'arcee-ai/trinity-large-preview:free';
         },
         get stats() { return GM_getValue('ai_perf_stats', {}); },
         set stats(v) { GM_setValue('ai_perf_stats', v); }
