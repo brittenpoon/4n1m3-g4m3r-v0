@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      3.0
 // @description  OCR and translate manga pages using OpenRouter Gemini API with persistent settings, global controls, and minimizable UI.
-// @match        https://klz9.com/*
+// @match        https://klz9.com/*chapter*.html
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
