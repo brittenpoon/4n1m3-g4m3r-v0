@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4.4)
-// @version      2.0.4.4
-// @description  強化防錯位 Prompt，加入清除快取按鈕，移除 OpenCC。
+// @name         Netflix AI 雙語字幕 (v2.0.4.6)
+// @version      2.0.4.6
+// @description  強制 JSON 陣列對位 + 物理截斷符 (||STOP||)，徹底根除合併句子與跳 ID 問題。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,10 +16,9 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4.4';
-    const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
+    const SCRIPT_VERSION = '2.0.4.6';
+    const CACHE_TTL = 24 * 60 * 60 * 1000;
 
-    // --- 1. Database & State ---
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
@@ -45,28 +44,21 @@
     window.isAITranslating = false;
     window.glossaryPrompt = "";
 
-    // --- 2. 緩存機制 (Cache System) ---
     const hashCode = (s) => s.split('').reduce((a, b) => { a = ((a << 5) - a) + b.charCodeAt(0); return a & a }, 0).toString(36);
 
     function getCache(hashKey) {
         let cache = GM_getValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModel, items: {} });
-
         if (cache.version !== SCRIPT_VERSION || cache.model !== db.activeModel) {
             cache = { version: SCRIPT_VERSION, model: db.activeModel, items: {} };
             GM_setValue('ai_translation_cache', cache);
             return null;
         }
-
         let isDirty = false;
         const now = Date.now();
         for (const key in cache.items) {
-            if (now - cache.items[key].ts > CACHE_TTL) {
-                delete cache.items[key];
-                isDirty = true;
-            }
+            if (now - cache.items[key].ts > CACHE_TTL) { delete cache.items[key]; isDirty = true; }
         }
         if (isDirty) GM_setValue('ai_translation_cache', cache);
-
         return cache.items[hashKey] ? cache.items[hashKey].mapping : null;
     }
 
@@ -76,7 +68,6 @@
         GM_setValue('ai_translation_cache', cache);
     }
 
-    // --- 3. 獲取專有名詞庫 (Glossary) ---
     function fetchGlossary() {
         GM_xmlhttpRequest({
             method: "GET",
@@ -86,11 +77,8 @@
                     const arr = JSON.parse(res.responseText);
                     if (Array.isArray(arr) && arr.length > 0) {
                         let text = "\n\n【專有名詞對照表】\n遇到以下名詞，請務必使用對應譯名：\n";
-                        arr.forEach(item => {
-                            if (item.orig && item.trans) text += `- ${item.orig}: ${item.trans}\n`;
-                        });
+                        arr.forEach(item => { if (item.orig && item.trans) text += `- ${item.orig}: ${item.trans}\n`; });
                         window.glossaryPrompt = text;
-                        console.log("%c[v2.0.4.3] Glossary Loaded", "color: #00FF00;");
                     }
                 } catch (e) {}
             }
@@ -98,25 +86,12 @@
     }
     fetchGlossary();
 
-    // --- 4. 樣式與解鎖選取 ---
     GM_addStyle(`
-        * {
-            -webkit-user-select: text !important;
-            -moz-user-select: text !important;
-            -ms-user-select: text !important;
-            user-select: text !important;
-        }
+        * { -webkit-user-select: text !important; -moz-user-select: text !important; -ms-user-select: text !important; user-select: text !important; }
         .player-timedtext-text-container { pointer-events: auto !important; }
-        #ai-translation-loader {
-            position: fixed; top: 12%; left: 50%; transform: translateX(-50%);
-            background: rgba(10, 10, 10, 0.98); color: #fff; padding: 25px 40px;
-            border-radius: 15px; font-size: 18px; z-index: 2000001; display: none;
-            border: 1px solid #FFD700; pointer-events: none; text-align: center;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.9); line-height: 1.6;
-        }
+        #ai-translation-loader { position: fixed; top: 12%; left: 50%; transform: translateX(-50%); background: rgba(10, 10, 10, 0.98); color: #fff; padding: 25px 40px; border-radius: 15px; font-size: 18px; z-index: 2000001; display: none; border: 1px solid #FFD700; pointer-events: none; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.9); line-height: 1.6; }
         #ai-menu-popup { pointer-events: auto !important; z-index: 2000002; }
-        body.hide-ai-subs .ai-translated-span,
-        body.hide-ai-subs .ai-translated-br { display: none !important; }
+        body.hide-ai-subs .ai-translated-span, body.hide-ai-subs .ai-translated-br { display: none !important; }
         .ai-translated-span { display: inline-block !important; }
     `);
 
@@ -126,17 +101,9 @@
     }
     unlockTextSelection();
 
-    // --- 5. 輸出 JSON 功能 ---
     function exportTranslationJSON(stats, mapping, fromCache = false) {
-        const outputData = {
-            timestamp: new Date().toISOString(),
-            modelUsed: stats.model,
-            processingTimeMs: Math.round(stats.duration),
-            totalLines: stats.lines,
-            fromCache: fromCache,
-            translations: mapping
-        };
-        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4.3)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4.3)";
+        const outputData = { timestamp: new Date().toISOString(), modelUsed: stats.model, processingTimeMs: Math.round(stats.duration), totalLines: stats.lines, fromCache: fromCache, translations: mapping };
+        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4.6)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4.6)";
         console.groupCollapsed(title, "color: #00FFFF; font-weight: bold; font-size: 12px;");
         console.log(JSON.stringify(outputData, null, 2));
         console.groupEnd();
@@ -144,75 +111,35 @@
     }
 
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
-
-    const updateStats = (ms, lines) => {
-        const allStats = db.stats;
-        const m = db.activeModel;
-        if (!allStats[m]) allStats[m] = { totalTime: 0, totalLines: 0 };
-        allStats[m].totalTime += ms;
-        allStats[m].totalLines += lines;
-        db.stats = allStats;
-    };
-
-    const getEstimatedTime = (lineCount) => {
-        const stats = db.stats[db.activeModel];
-        if (!stats || stats.totalLines === 0) return "計算中...";
-        return Math.round(((stats.totalTime / stats.totalLines) * lineCount) / 1000) + " 秒";
-    };
+    const updateStats = (ms, lines) => { const allStats = db.stats; const m = db.activeModel; if (!allStats[m]) allStats[m] = { totalTime: 0, totalLines: 0 }; allStats[m].totalTime += ms; allStats[m].totalLines += lines; db.stats = allStats; };
+    const getEstimatedTime = (lineCount) => { const stats = db.stats[db.activeModel]; if (!stats || stats.totalLines === 0) return "計算中..."; return Math.round(((stats.totalTime / stats.totalLines) * lineCount) / 1000) + " 秒"; };
 
     const toggleLoading = (isTranslating, totalLines = 0) => {
         window.isAITranslating = isTranslating;
         let loader = document.getElementById('ai-translation-loader');
-        if (!loader) {
-            loader = document.createElement('div');
-            loader.id = 'ai-translation-loader';
-            document.body.appendChild(loader);
-        }
-
+        if (!loader) { loader = document.createElement('div'); loader.id = 'ai-translation-loader'; document.body.appendChild(loader); }
         if (isTranslating) {
-            const startTime = Date.now();
-            const est = getEstimatedTime(totalLines);
+            const startTime = Date.now(); const est = getEstimatedTime(totalLines);
             if (window.uiTimer) clearInterval(window.uiTimer);
             window.uiTimer = setInterval(() => {
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
-                loader.innerHTML = `
-                    <div style="font-weight:bold; color:#FFD700; margin-bottom:8px; font-size:20px;">⏳ 標籤隔離翻譯中 (Tag Isolation Mode)</div>
-                    <div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div>
-                    <div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div>
-                    <div style="font-size:11px; color:#888;">正在嚴格對齊 ${totalLines} 行</div>
-                `;
+                loader.innerHTML = `<div style="font-weight:bold; color:#FFD700; margin-bottom:8px; font-size:20px;">⏳ JSON 嚴格對位翻譯中</div><div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div><div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div><div style="font-size:11px; color:#888;">正在處理 ${totalLines} 行結構數據</div>`;
             }, 1000);
             loader.style.display = 'block';
-
             if (window.autoPauseTimer) clearInterval(window.autoPauseTimer);
-            window.autoPauseTimer = setInterval(() => {
-                const video = document.querySelector('video');
-                if (video && !video.paused) {
-                    const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
-                    if (pauseBtn) pauseBtn.click();
-                    else video.pause();
-                } else if (video && video.paused) {
-                    clearInterval(window.autoPauseTimer);
-                }
-            }, 500);
+            window.autoPauseTimer = setInterval(() => { const video = document.querySelector('video'); if (video && !video.paused) { const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]'); if (pauseBtn) pauseBtn.click(); else video.pause(); } else if (video && video.paused) { clearInterval(window.autoPauseTimer); } }, 500);
         } else {
-            clearInterval(window.uiTimer);
-            clearInterval(window.autoPauseTimer);
-            loader.style.display = 'none';
-            const playBtn = document.querySelector('[data-uia="control-play-pause-play"]');
-            if (playBtn) playBtn.click();
+            clearInterval(window.uiTimer); clearInterval(window.autoPauseTimer); loader.style.display = 'none';
+            const playBtn = document.querySelector('[data-uia="control-play-pause-play"]'); if (playBtn) playBtn.click();
         }
     };
 
-    // --- 6. 攔截與 API ---
     const oldOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
                 if (!db.isEnabled || !db.apiKey) return;
-
                 if (window.location.pathname.startsWith('/browse')) return;
-
                 await processAndTranslate(this.responseText, url);
             });
         }
@@ -239,24 +166,25 @@
 
         if (cachedMapping) {
             window.subtitleMap.clear();
-            cachedMapping.forEach(item => {
-                if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans);
-            });
-            console.log("%c=== Netflix AI 命中緩存 (v2.0.4.3) ===", "color: #00FFFF; font-weight: bold;");
+            cachedMapping.forEach(item => { if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans); });
+            console.log("%c=== Netflix AI 命中緩存 (v2.0.4.6) ===", "color: #00FFFF; font-weight: bold;");
             exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: 0 }, cachedMapping, true);
             return;
         }
 
-        const taggedInput = originalLines.map((line, idx) => `[${idx}] ${line} [/${idx}]`).join('\n');
+        // 方案 1 & 4：轉換為 JSON 格式，並在每行結尾注入 ||STOP|| 物理截斷符
+        const inputObj = originalLines.map((line, idx) => ({ id: idx, orig: line + " ||STOP||" }));
+        const taggedInput = JSON.stringify(inputObj);
 
-        // 【更新】更強硬的系統提示，防止 AI 合併句子導致錯位
         let systemContent = `你是一位專業影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
-                            【對位死命令：絕對原子化標籤隔離】
-                            1. 格式：你將收到 "[id] 原文 [/id]"，回傳必須嚴格遵循 "[id] 譯文 [/id]"。
-                            2. 嚴禁漏行與錯位：輸入有 N 組 ID，輸出必須不多不少剛好 N 組 ID。絕對禁止將兩個 ID 的內容合併翻譯成一個 ID！
-                            3. 獨立翻譯：即使上下文語意連貫，也絕對不可以將 [id+1] 的意思提前寫到 [id] 裡面。若原文未完結，譯文也必須保持未完結狀態。
-                            4. 嚴禁留空：即使原文只有語氣詞（如「あっ…」），也必須翻譯並保留在對應的 ID 標籤內。
-                            5. 檢查對齊：送出前請檢查譯文的 ID 是否與原文 ID 完全一致，絕不允許出現 ID 數字跳號或錯位。`;
+                            【對位死命令：強制 JSON 陣列與物理截斷】
+                            1. 你將收到一個 JSON 陣列，每個物件包含 "id" 和 "orig"。
+                            2. 必須回傳格式完全相同的 JSON 陣列，把 "orig" 替換成 "trans"（你的譯文）。
+                            3. 嚴禁漏行與合併：輸入有 N 個 ID，輸出必須剛好 N 個 ID！絕對禁止將相鄰句子的意思合併！
+                            4. 物理截斷：原文結尾加了 "||STOP||" 符號。這代表「語意強制結算」。即使這句話沒講完，你也必須立刻停止翻譯，絕對不可以去偷看或借用下一個 ID 的意思。輸出譯文時請刪除 "||STOP||"。
+                            5. 嚴禁留空：即使只有語氣詞也必須翻譯。
+                            6. 格式要求：務必只回傳合法的 JSON 字串陣列，不要包含任何 markdown 標記 (如 \`\`\`json) 或是多餘的解釋。`;
+        
         if (window.glossaryPrompt) systemContent += window.glossaryPrompt;
 
         const reqStartTime = performance.now();
@@ -273,38 +201,47 @@
             onload: function(res) {
                 try {
                     const json = JSON.parse(res.responseText);
-                    const aiContent = json.choices[0].message.content;
+                    let aiContent = json.choices[0].message.content.trim();
                     const duration = performance.now() - reqStartTime;
 
+                    // 清理可能存在的 markdown 標籤
+                    aiContent = aiContent.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+                    
+                    const parsedArray = JSON.parse(aiContent);
                     window.subtitleMap.clear();
                     const exportMapping = [];
 
-                    const lineRegex = /\[(\d+)\]\s*([\s\S]*?)(?=\s*\[\/\1\]|\s*\[\d+\]|$)/g;
-                    let match;
-                    while ((match = lineRegex.exec(aiContent)) !== null) {
-                        const idx = parseInt(match[1]);
-                        let trans = match[2].trim();
-                        trans = trans.replace(/\[\/\d+\]/g, '').trim();
+                    // 直接遍歷 JSON 陣列，取代 Regex
+                    parsedArray.forEach(item => {
+                        const idx = parseInt(item.id);
+                        if (isNaN(idx)) return;
+                        
+                        // 兼容各種可能的 JSON 鍵值，並去除截斷符
+                        let trans = (item.trans || item.text || item.translation || item.orig || "").replace(/\|\|STOP\|\|/gi, '').trim();
 
                         const orig = originalLines[idx];
                         if (orig) {
                             window.subtitleMap.set(getMatchKey(orig), trans);
                             exportMapping.push({ id: idx, orig: orig, trans: trans });
                         }
-                    }
+                    });
 
-                    console.log("%c=== Netflix AI API 翻譯完成 (v2.0.4.3) ===", "color: #00FF00; font-weight: bold;");
+                    console.log("%c=== Netflix AI API 翻譯完成 (JSON Mode) (v2.0.4.6) ===", "color: #00FF00; font-weight: bold;");
                     exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
 
                     setCache(xmlHash, exportMapping);
-                } finally { toggleLoading(false); }
+                } catch (err) {
+                    console.error("JSON 解析失敗，可能 AI 回傳格式錯誤:", err);
+                    alert("翻譯發生結構錯誤，請嘗試清除快取後重試。");
+                } finally { 
+                    toggleLoading(false); 
+                }
             },
             onerror: () => toggleLoading(false)
         });
     }
 
-    // --- 7. 渲染邏輯 ---
     const observer = new MutationObserver(() => {
         if (!db.isEnabled) return;
 
@@ -357,7 +294,6 @@
 
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
-    // --- 8. 選單 ---
     function injectControlMenu() {
         if (document.getElementById('ai-subtitle-wrapper')) return;
         const targetBtn = document.querySelector('[data-uia="control-audio-subtitle"]');
@@ -367,7 +303,7 @@
         wrapper.id = 'ai-subtitle-wrapper';
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
-            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4.3</button></div>
+            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4.6</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
@@ -379,7 +315,7 @@
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
                 <button id="ai-clear-cache-btn" style="background:#888; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">🗑️ 清除快取 (Clear Cache)</button>
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4.3</button>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4.6</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
@@ -398,7 +334,6 @@
             window.open('https://github.com/brittenpoon/4n1m3-g4m3r-v0/blob/main/Glossary.json', '_blank');
         };
 
-        // 【新增】清除快取按鈕邏輯
         document.getElementById('ai-clear-cache-btn').onclick = (e) => {
             e.stopPropagation();
             if (confirm('確定要清除所有已翻譯的字幕快取嗎？')) {
