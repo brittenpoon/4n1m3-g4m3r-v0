@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4.8)
-// @version      2.0.4.8
-// @description  鏡像抄寫法 (Echo Prompting)，強迫 AI 輸出「ID|原文|譯文」，徹底根除骨牌式錯位平移。
+// @name         Netflix AI 雙語字幕 (v2.0.4.9)
+// @version      2.0.4.9
+// @description  鏡像抄寫法 + 動態行數核對，強制 AI 檢查總行數與最後 ID，防漏行跳號。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4.8';
+    const SCRIPT_VERSION = '2.0.4.9';
     const CACHE_TTL = 24 * 60 * 60 * 1000;
 
     const db = {
@@ -103,7 +103,7 @@
 
     function exportTranslationJSON(stats, mapping, fromCache = false) {
         const outputData = { timestamp: new Date().toISOString(), modelUsed: stats.model, processingTimeMs: Math.round(stats.duration), totalLines: stats.lines, fromCache: fromCache, translations: mapping };
-        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4.8)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4.8)";
+        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4.9)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4.9)";
         console.groupCollapsed(title, "color: #00FFFF; font-weight: bold; font-size: 12px;");
         console.log(JSON.stringify(outputData, null, 2));
         console.groupEnd();
@@ -123,7 +123,7 @@
             if (window.uiTimer) clearInterval(window.uiTimer);
             window.uiTimer = setInterval(() => {
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
-                loader.innerHTML = `<div style="font-weight:bold; color:#FFD700; margin-bottom:8px; font-size:20px;">⏳ 鏡像對位翻譯中 (Echo Mode)</div><div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div><div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div><div style="font-size:11px; color:#888;">正防範平移錯位，處理 ${totalLines} 行</div>`;
+                loader.innerHTML = `<div style="font-weight:bold; color:#FFD700; margin-bottom:8px; font-size:20px;">⏳ 鏡像對位與行數核對中</div><div style="font-size:13px; color:#ccc;">模型: ${db.activeModel.split('/').pop()}</div><div style="font-size:14px; margin:5px 0;">已用: ${elapsed}s / 預計: ${est}</div><div style="font-size:11px; color:#888;">防跳號機制運作中，處理 ${totalLines} 行</div>`;
             }, 1000);
             loader.style.display = 'block';
             if (window.autoPauseTimer) clearInterval(window.autoPauseTimer);
@@ -167,21 +167,25 @@
         if (cachedMapping) {
             window.subtitleMap.clear();
             cachedMapping.forEach(item => { if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans); });
-            console.log("%c=== Netflix AI 命中緩存 (v2.0.4.8) ===", "color: #00FFFF; font-weight: bold;");
+            console.log("%c=== Netflix AI 命中緩存 (v2.0.4.9) ===", "color: #00FFFF; font-weight: bold;");
             exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: 0 }, cachedMapping, true);
             return;
         }
 
         const taggedInput = originalLines.map((line, idx) => `${idx}|${line}`).join('\n');
+        
+        // 【核心修改】動態計算行數，並寫入 System Content
+        const totalLines = originalLines.length;
+        const lastId = totalLines - 1;
 
-        // 【終極方案】加入鏡像抄寫機制
         let systemContent = `你是一位專業影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
-                            【鏡像對位死命令（防錯位平移）】
+                            【鏡像對位死命令（防錯位與防漏行）】
                             1. 輸入格式為「ID|原文」，每行一句。
                             2. 輸出格式必須嚴格為「ID|原文|譯文」，每行一句。
-                            3. **極度重要：你必須把原文一字不漏地抄寫一次，然後加上 "|"，最後才寫譯文！** 這是為了強迫你鎖定當前句子，絕對禁止跳行或將下句意思合併！
-                            4. 即使上一句語意未完結，也必須在對應的 ID 獨立回傳。
-                            5. 嚴禁留空，不要輸出任何 Markdown 標記，純粹回傳清單。`;
+                            3. **極度重要：你必須把原文一字不漏地抄寫一次，然後加上 "|"，最後才寫譯文！**
+                            4. 【強制行數核對】本次輸入共有 ${totalLines} 行！起始 ID 為 0，最後一個 ID 必須是 ${lastId}！你輸出的行數必須剛好是 ${totalLines} 行！
+                            5. 翻譯時請嚴格依照序號遞增，絕對不允許發生「15, 16, 18」這種跳號情況！即使原文只有一個標點符號或語氣詞，也必須給出對應的 ID|原文|譯文。
+                            6. 嚴禁留空，不要輸出任何 Markdown 標記，純粹回傳清單。`;
         
         if (window.glossaryPrompt) systemContent += window.glossaryPrompt;
 
@@ -205,27 +209,32 @@
                     window.subtitleMap.clear();
                     const exportMapping = [];
 
-                    // 【更新】解析「ID | 原文 | 譯文」的三段式格式
                     const lines = aiContent.split('\n');
+                    let processedCount = 0;
+
                     lines.forEach(line => {
                         const parts = line.split('|');
-                        // 必須至少有 3 部分: ID, 原文, 譯文
                         if (parts.length >= 3) {
                             const idx = parseInt(parts[0].trim());
                             if (isNaN(idx)) return;
                             
-                            // 譯文在第三個部分開始（防譯文內部自帶 | 號）
                             const trans = parts.slice(2).join('|').trim();
                             const orig = originalLines[idx];
                             
                             if (orig && trans) {
                                 window.subtitleMap.set(getMatchKey(orig), trans);
                                 exportMapping.push({ id: idx, orig: orig, trans: trans });
+                                processedCount++;
                             }
                         }
                     });
 
-                    console.log("%c=== Netflix AI API 翻譯完成 (Echo Mode) (v2.0.4.8) ===", "color: #00FF00; font-weight: bold;");
+                    // 檢查是否有漏行並在 Console 提醒
+                    if (processedCount < totalLines) {
+                        console.warn(`%c[警告] AI 疑似跳號！預期 ${totalLines} 行，實際回傳 ${processedCount} 行。`, "color: #FFA500; font-weight: bold;");
+                    }
+
+                    console.log("%c=== Netflix AI API 翻譯完成 (Count Verified) (v2.0.4.9) ===", "color: #00FF00; font-weight: bold;");
                     exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
 
@@ -302,7 +311,7 @@
         wrapper.id = 'ai-subtitle-wrapper';
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
-            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4.8</button></div>
+            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4.9</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
@@ -314,7 +323,7 @@
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
                 <button id="ai-clear-cache-btn" style="background:#888; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">🗑️ 清除快取 (Clear Cache)</button>
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4.8</button>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4.9</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
