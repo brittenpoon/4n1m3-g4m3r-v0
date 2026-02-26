@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4.2)
+// @name         Netflix AI 雙語字幕 (v2.0.4.3)
 // @version      2.0.4.3
-// @description  還原 1.28.0 翻譯邏輯，加入文字解鎖、JSON 輸出、Glossary 支援、24 小時快取，並停用首頁預覽翻譯。
+// @description  強化防錯位 Prompt，加入清除快取按鈕，移除 OpenCC。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -90,7 +90,7 @@
                             if (item.orig && item.trans) text += `- ${item.orig}: ${item.trans}\n`;
                         });
                         window.glossaryPrompt = text;
-                        console.log("%c[v2.0.4] Glossary Loaded", "color: #00FF00;");
+                        console.log("%c[v2.0.4.3] Glossary Loaded", "color: #00FF00;");
                     }
                 } catch (e) {}
             }
@@ -136,7 +136,7 @@
             fromCache: fromCache,
             translations: mapping
         };
-        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4)";
+        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4.3)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4.3)";
         console.groupCollapsed(title, "color: #00FFFF; font-weight: bold; font-size: 12px;");
         console.log(JSON.stringify(outputData, null, 2));
         console.groupEnd();
@@ -211,7 +211,6 @@
             this.addEventListener('load', async function() {
                 if (!db.isEnabled || !db.apiKey) return;
 
-                // 【新增】如果喺首頁 (Browse) 就不作翻譯
                 if (window.location.pathname.startsWith('/browse')) return;
 
                 await processAndTranslate(this.responseText, url);
@@ -243,21 +242,21 @@
             cachedMapping.forEach(item => {
                 if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans);
             });
-            console.log("%c=== Netflix AI 命中緩存 (v2.0.4) ===", "color: #00FFFF; font-weight: bold;");
+            console.log("%c=== Netflix AI 命中緩存 (v2.0.4.3) ===", "color: #00FFFF; font-weight: bold;");
             exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: 0 }, cachedMapping, true);
             return;
         }
 
         const taggedInput = originalLines.map((line, idx) => `[${idx}] ${line} [/${idx}]`).join('\n');
 
+        // 【更新】更強硬的系統提示，防止 AI 合併句子導致錯位
         let systemContent = `你是一位專業影視翻譯員。翻譯為「標準香港繁體中文（書面語）」。
-                            【對位死命令：原子化標籤隔離模式】
-                            1. 你會收到格式為 "[id] 原文 [/id]" 的獨立資料包。
-                            2. **嚴格禁止跨標籤翻譯**：每個標籤內的原文必須「獨立且完整」地在該標籤內翻譯，嚴禁將下一行 ID 的語意提前或合併。
-                            3. **嚴格禁止譯文留空**：即使原文只有一個字或符號，也必須回傳譯文。
-                            4. **1:1 結構對應**：輸入有 N 組標籤，輸出必須精確回傳 N 組標籤，序號 ID 必須完全一致。
-                            5. **語意截斷**：如果原文在一行內未完（例如有 ⸺ 符號），請在該 ID 內保留譯文的未完感，絕不可私自去後面 ID 偷取答案來補全。
-                            6. 格式範例："[id] 譯文 [/id]"。`;
+                            【對位死命令：絕對原子化標籤隔離】
+                            1. 格式：你將收到 "[id] 原文 [/id]"，回傳必須嚴格遵循 "[id] 譯文 [/id]"。
+                            2. 嚴禁漏行與錯位：輸入有 N 組 ID，輸出必須不多不少剛好 N 組 ID。絕對禁止將兩個 ID 的內容合併翻譯成一個 ID！
+                            3. 獨立翻譯：即使上下文語意連貫，也絕對不可以將 [id+1] 的意思提前寫到 [id] 裡面。若原文未完結，譯文也必須保持未完結狀態。
+                            4. 嚴禁留空：即使原文只有語氣詞（如「あっ…」），也必須翻譯並保留在對應的 ID 標籤內。
+                            5. 檢查對齊：送出前請檢查譯文的 ID 是否與原文 ID 完全一致，絕不允許出現 ID 數字跳號或錯位。`;
         if (window.glossaryPrompt) systemContent += window.glossaryPrompt;
 
         const reqStartTime = performance.now();
@@ -294,7 +293,7 @@
                         }
                     }
 
-                    console.log("%c=== Netflix AI API 翻譯完成 (v2.0.4) ===", "color: #00FF00; font-weight: bold;");
+                    console.log("%c=== Netflix AI API 翻譯完成 (v2.0.4.3) ===", "color: #00FF00; font-weight: bold;");
                     exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
 
@@ -368,7 +367,7 @@
         wrapper.id = 'ai-subtitle-wrapper';
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
-            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4</button></div>
+            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4.3</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
@@ -379,7 +378,8 @@
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4</button>
+                <button id="ai-clear-cache-btn" style="background:#888; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">🗑️ 清除快取 (Clear Cache)</button>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4.3</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
@@ -396,6 +396,17 @@
         document.getElementById('ai-glossary-btn').onclick = (e) => {
             e.stopPropagation();
             window.open('https://github.com/brittenpoon/4n1m3-g4m3r-v0/blob/main/Glossary.json', '_blank');
+        };
+
+        // 【新增】清除快取按鈕邏輯
+        document.getElementById('ai-clear-cache-btn').onclick = (e) => {
+            e.stopPropagation();
+            if (confirm('確定要清除所有已翻譯的字幕快取嗎？')) {
+                GM_setValue('ai_translation_cache', { version: SCRIPT_VERSION, model: db.activeModel, items: {} });
+                window.subtitleMap.clear();
+                window.processedUrls.clear();
+                alert('快取已成功清除！重新載入影片即可重新翻譯。');
+            }
         };
 
         document.querySelectorAll('input[name="ai-model"]').forEach(r => {
