@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Netflix AI 雙語字幕 (v2.0.4.3)
-// @version      2.0.4.3
+// @name         Netflix AI 雙語字幕 (v2.0.4.4)
+// @version      2.0.4.4
 // @description  強化防錯位 Prompt，加入清除快取按鈕，移除 OpenCC。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '2.0.4.3';
+    const SCRIPT_VERSION = '2.0.4.4';
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 小時 (毫秒)
 
     // --- 1. Database & State ---
