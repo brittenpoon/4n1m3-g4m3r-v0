@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (Debug 強化版 v4.24)
-// @version      4.24.0
-// @description  Rule 1 語言封鎖，大尺寸 UI 按鈕，並會喺 Console 輸出每段任務嘅第一個完整 Prompt。
+// @name         Netflix AI 字幕 (指令強化版 v4.25)
+// @version      4.25.0
+// @description  強化 Rule 1 及 Rule 8 權重，新增 Rule 9 字體校對，解決英中夾雜與譯名錯誤問題。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.24.0";
+    const SCRIPT_VERSION = "4.25.0";
     let currentAbortController = null;
 
     const db = {
@@ -182,7 +182,7 @@
         const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
         const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY (Preferred names, slang, and terms): ${glossaryPairs.join(', ')}\n` : "";
+        let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY PRIORITY (Preferred names, slang, and terms): ${glossaryPairs.join(', ')}. You MUST use these exact translations. This takes absolute precedence over your internal knowledge.\n` : "";
 
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
@@ -206,30 +206,29 @@
             if (currentVideoCache[textKey]) {
                 const translated = currentVideoCache[textKey];
                 window.subtitleMap.set(textKey, translated);
-                console.log(`%c[${tsLog}] [${i+1}/${total}] ⚡[Cache] %c${text} %c➔ %c${translated}`, "color:#00BFFF", "color:#fff", "color:#00FF00", "color:#FFD700");
                 updateUIProgress(i + 1, total, currentAvgMs, (total - i - 1) * currentAvgMs);
                 continue; 
             }
 
+            // 修改後的終極 Prompt (v4.25 特化)
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
 Additional requirements:
-1. STRICT SCRIPT RULE: The final output MUST BE ENTIRELY and EXCLUSIVELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY non-target characters, including English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul).
+1. STRICT SCRIPT RULE: The final output MUST BE ENTIRELY and EXCLUSIVELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY non-target characters, including but not limited to English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul). Any English words in the output is a total failure.
 2. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
 3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context. Do not hallucinate meanings.
 4. KATAKANA RULE: You MUST translate Katakana terms (e.g., ラーメン, ビルビルダー) into their proper ${db.targetLangName} equivalents (e.g., 拉麵, 健美先生). Do NOT just copy them or use other languages.
 5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation, even for repeated words or sound effects.
 6. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.
 7. STYLE: Ensure the dialogue sounds natural and fluent in ${db.targetLangName}. Avoid machine-like translations.${glossaryRules}
+9. CHARACTER CONSISTENCY: After translating, perform a final check to ensure all Japanese Kanji and Simplified Chinese characters are interchanged to their correct ${db.targetLangName} equivalents.
+
 Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:
 
 
 ${text}`;
 
-            // --- [NEW] Always log the very first prompt sent in this batch ---
-            if (i === 0) {
-                console.log("%c[Debug] First Full Request Prompt Sent to Ollama:", "color: #FFA500; font-weight: bold;", prompt);
-            }
+            if (i === 0) console.log("%c[Debug] First Full Request Prompt:", "color: #FFA500; font-weight: bold;", prompt);
 
             const startTime = Date.now();
             await new Promise((resolve) => {
