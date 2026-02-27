@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (終極語言鎖定版 v4.18)
-// @version      4.18.0
-// @description  強制禁止輸出英文及日文原文，強化對口語與特殊標點 (如長破折號) 嘅處理。
+// @name         Netflix AI 字幕 (精確鎖定與任務中斷版 v4.19)
+// @version      4.19.0
+// @description  僅在 /watch/ 頁面運行，網址變更時立刻中斷翻譯任務，節省效能。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,8 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.18.0";
+    const SCRIPT_VERSION = "4.19.0";
+    let currentAbortController = null; // 用於中斷請求
 
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
@@ -53,7 +54,7 @@
 
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
     const getTimestamp = () => new Date().toLocaleTimeString([], {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
-    
+
     function formatTime(ms) {
         if (ms === 0 || isNaN(ms)) return "--";
         const totalSec = Math.floor(ms / 1000);
@@ -66,6 +67,29 @@
         const match = window.location.pathname.match(/\/watch\/(\d+)/);
         return match ? match[1] : 'unknown_hash';
     }
+
+    // --- 中斷任務邏輯 ---
+    function abortPreviousTasks() {
+        if (currentAbortController) {
+            console.log("%c[System] 網址變更，中止進行中的翻譯任務。", "color: #FF4500; font-weight: bold;");
+            currentAbortController.abort();
+            currentAbortController = null;
+        }
+        window.isAITranslating = false;
+        window.processedUrls.clear(); // 切換影片後清空，否則新影片字幕會無法讀取
+        let loader = document.getElementById('ai-translation-loader');
+        if (loader) loader.style.display = 'none';
+    }
+
+    // 監聽網址變化 (SPA 導航)
+    let lastPath = window.location.pathname;
+    setInterval(() => {
+        if (window.location.pathname !== lastPath) {
+            lastPath = window.location.pathname;
+            abortPreviousTasks();
+            hasPausedForCurrentClip = false;
+        }
+    }, 1000);
 
     function cleanAndGetCache() {
         let cache = GM_getValue('ai_subtitle_cache', {});
@@ -96,12 +120,8 @@
                         for (const [key, val] of Object.entries(data)) {
                             if (!key.startsWith('_') && key.trim() !== "") filteredData[key] = val;
                         }
-                        console.log("%c[Glossary] 成功載入並淨化名詞庫:", "color:#00FF00", Object.keys(filteredData).length, "項");
                         resolve(filteredData);
-                    } catch (e) {
-                        console.error("[Glossary] JSON 解析失敗。", e);
-                        resolve({});
-                    }
+                    } catch (e) { resolve({}); }
                 },
                 onerror: () => resolve({})
             });
@@ -109,15 +129,12 @@
     }
 
     GM_addStyle(`
-        * { -webkit-user-select: text !important; -moz-user-select: text !important; -ms-user-select: text !important; user-select: text !important; }
+        * { -webkit-user-select: text !important; user-select: text !important; }
         .player-timedtext-text-container { pointer-events: auto !important; }
-        #ai-translation-loader { position: fixed; top: 12%; left: 50%; transform: translateX(-50%); background: rgba(10, 10, 10, 0.98); color: #fff; padding: 20px 35px; border-radius: 12px; font-size: 16px; z-index: 2000001; display: none; border: 1px solid #FFD700; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.9); line-height: 1.6; min-width: 250px; }
-        body.hide-ai-subs .ai-translated-span, body.hide-ai-subs .ai-translated-br { display: none !important; }
+        #ai-translation-loader { position: fixed; top: 12%; left: 50%; transform: translateX(-50%); background: rgba(10, 10, 10, 0.98); color: #fff; padding: 20px 35px; border-radius: 12px; font-size: 16px; z-index: 2000001; display: none; border: 1px solid #FFD700; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.9); min-width: 250px; }
         .ai-translated-span { display: inline-block !important; color: #FFD700 !important; font-weight: bold; text-shadow: 2px 2px 4px #000 !important; }
         #ai-menu-popup { display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.95); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; font-size:14px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); max-height: 80vh; overflow-y: auto; }
         #ai-menu-popup select, #ai-menu-popup input[type="text"] { background:#333; color:white; padding:6px; border:1px solid #666; border-radius:4px; outline:none; width:100%; margin-top:4px; box-sizing: border-box; }
-        #ai-menu-popup::-webkit-scrollbar { width: 6px; }
-        #ai-menu-popup::-webkit-scrollbar-thumb { background: #666; border-radius: 3px; }
     `);
 
     const events = ['copy', 'contextmenu', 'selectstart', 'mousedown', 'mouseup'];
@@ -141,19 +158,8 @@
             document.body.appendChild(loader);
         }
         loader.style.display = 'block';
-        
-        let statsHtml = '';
-        if (avgMs > 0) {
-            statsHtml = `<div style="font-size:13px; color:#aaa; margin-top:8px; border-top:1px solid #333; padding-top:8px;">
-                            平均: <span style="color:#00BFFF;">${(avgMs/1000).toFixed(2)}s</span> / 行<br>
-                            剩餘: <span style="color:#FF4500; font-weight:bold;">${formatTime(etaMs)}</span>
-                         </div>`;
-        }
-
-        loader.innerHTML = `<div style="font-weight:bold; color:#FFD700;">⏳ 本地模型翻譯中 (${db.aiModel})</div>
-                            <div style="font-size:15px; margin-top:5px;">進度: ${current} / ${total}</div>
-                            ${statsHtml}`;
-                            
+        let statsHtml = avgMs > 0 ? `<div style="font-size:13px; color:#aaa; margin-top:8px; border-top:1px solid #333; padding-top:8px;">平均: ${(avgMs/1000).toFixed(2)}s | 剩餘: ${formatTime(etaMs)}</div>` : '';
+        loader.innerHTML = `<div style="font-weight:bold; color:#FFD700;">⏳ 本地模型翻譯中</div><div style="font-size:15px; margin-top:5px;">進度: ${current} / ${total}</div>${statsHtml}`;
         if (current >= total) setTimeout(() => loader.style.display = 'none', 2000);
     }
 
@@ -161,7 +167,8 @@
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
-                hasPausedForCurrentClip = false;
+                // 僅在 watch 頁面執行翻譯
+                if (!window.location.pathname.includes('/watch/')) return;
                 await processAndTranslate(this.responseText, url);
             });
         }
@@ -185,14 +192,12 @@
 
         triggerInitialPause();
         window.isAITranslating = true;
-        const total = originalLines.length;
+        currentAbortController = new AbortController();
 
+        const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
-        let glossaryRules = "";
         const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        if (glossaryPairs.length > 0) {
-            glossaryRules = `\n7. STRICT GLOSSARY (Translate exact terms): ${glossaryPairs.join(', ')}\n`;
-        }
+        let glossaryRules = glossaryPairs.length > 0 ? `\n7. STRICT GLOSSARY: ${glossaryPairs.join(', ')}\n` : "";
 
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
@@ -207,41 +212,36 @@
         let totalAiTimeMs = 0;
 
         for (let i = 0; i < total; i++) {
+            // 如果任務被中斷，立刻退出迴圈
+            if (currentAbortController?.signal.aborted) return;
+
             const text = originalLines[i];
             const textKey = getMatchKey(text);
             const tsLog = getTimestamp();
-
             const currentAvgMs = successfulAiCount > 0 ? (totalAiTimeMs / successfulAiCount) : 0;
             const remainingLines = total - i - 1;
-            const currentEtaMs = remainingLines * currentAvgMs;
 
             if (currentVideoCache[textKey]) {
                 const translated = currentVideoCache[textKey];
                 window.subtitleMap.set(textKey, translated);
                 console.log(`%c[${tsLog}] [${i+1}/${total}] ⚡[Cache] %c${text} %c➔ %c${translated}`, "color:#00BFFF", "color:#fff", "color:#00FF00", "color:#FFD700");
-                updateUIProgress(i + 1, total, currentAvgMs, currentEtaMs);
+                updateUIProgress(i + 1, total, currentAvgMs, remainingLines * currentAvgMs);
                 continue; 
             }
 
-            // --- 終極防護 Prompt：禁止英文，針對破折號處理 ---
-            const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
-Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
+            const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Produce only the ${db.targetLangName} translation.
 
 Additional requirements:
-1. STRICT TARGET LANGUAGE ONLY: The output MUST BE ENTIRELY in ${db.targetLangName}. You are strictly FORBIDDEN from outputting ANY English, Japanese Kana (Hiragana/Katakana), Romaji, or Korean Hangul. NO ENGLISH ALLOWED.
-2. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
-3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context. Do not hallucinate meanings.
-4. KATAKANA RULE: Translate Katakana terms (e.g., ラーメン) into proper ${db.targetLangName} words (e.g., 拉麵). Do NOT copy them.
-5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation.
-6. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.${glossaryRules}
+1. STRICT TARGET LANGUAGE ONLY: NO English, Japanese, or Korean allowed in output.
+2. SYMBOLS: Retain symbols like ⸺ naturally.
+3. SLANG: Translate colloquialisms like "うっさい" accurately (e.g., 吵死了).
+4. NO REFUSALS: ALWAYS force a translation.
+5. STYLE: Natural ${db.targetLangName} dialogue.${glossaryRules}
 
-Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:
-
-
+Please translate:
 ${text}`;
 
             const startTime = Date.now();
-
             await new Promise((resolve) => {
                 GM_xmlhttpRequest({
                     method: "POST",
@@ -254,25 +254,18 @@ ${text}`;
                         options: { temperature: 0.1, num_predict: 256 }
                     }),
                     onload: function(res) {
+                        if (currentAbortController?.signal.aborted) return resolve();
                         try {
                             const translated = JSON.parse(res.responseText).response.trim();
                             const duration = Date.now() - startTime;
-                            
                             successfulAiCount++;
                             totalAiTimeMs += duration;
-                            
-                            const newAvgMs = totalAiTimeMs / successfulAiCount;
-                            const newEtaMs = remainingLines * newAvgMs;
-
                             window.subtitleMap.set(textKey, translated);
-                            
                             currentVideoCache[textKey] = translated;
                             allCache[videoHash].translations = currentVideoCache;
-                            allCache[videoHash].timestamp = Date.now();
                             GM_setValue('ai_subtitle_cache', allCache);
-
                             console.log(`%c[${getTimestamp()}] [${i+1}/${total}] (${(duration/1000).toFixed(2)}s) %c${text} %c➔ %c${translated}`, "color:#888", "color:#fff", "color:#00FF00", "color:#FFD700");
-                            updateUIProgress(i + 1, total, newAvgMs, newEtaMs);
+                            updateUIProgress(i + 1, total, totalAiTimeMs / successfulAiCount, remainingLines * (totalAiTimeMs / successfulAiCount));
                         } catch (e) {}
                         resolve();
                     },
@@ -281,152 +274,34 @@ ${text}`;
             });
         }
         window.isAITranslating = false;
-    }
-
-    function injectControlMenu() {
-        if (document.getElementById('ai-subtitle-wrapper')) return;
-        const targetBtn = document.querySelector('[data-uia="control-audio-subtitle"]');
-        if (!targetBtn) return;
-        
-        const btnWrapper = targetBtn.closest('div.medium') || targetBtn.parentElement;
-        const wrapper = document.createElement('div');
-        wrapper.id = 'ai-subtitle-wrapper';
-        wrapper.style.display = 'flex';
-        
-        const langOptions = SUPPORTED_LANGUAGES.map(lang => 
-            `<option value="${lang.code}" data-name="${lang.name}">${lang.name} (${lang.code})</option>`
-        ).join('');
-
-        wrapper.innerHTML = `
-            <div class="${btnWrapper.className}">
-                <button class="${targetBtn.className}" id="ai-toggle-btn" style="color:#FFD700; font-weight:bold; font-size:16px;">AI 字幕</button>
-            </div>
-            <div id="ai-menu-popup">
-                <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-weight:bold;">
-                    <input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用本地 Ollama
-                </label>
-                
-                <div style="border-top:1px solid #444; margin:10px 0 5px 0; padding-top:10px; color:#bbb;">模型設定:</div>
-                <label>
-                    Ollama 模型名稱:
-                    <input type="text" id="ai-model-input" value="${db.aiModel}">
-                </label>
-
-                <div style="border-top:1px solid #444; margin:10px 0 5px 0; padding-top:10px; color:#bbb;">名詞庫 (Glossary) JSON:</div>
-                <label>
-                    GitHub URL:
-                    <input type="text" id="ai-glossary-input" value="${db.glossaryUrl}">
-                </label>
-                <div style="display:flex; gap:10px; margin-top:5px;">
-                    <button id="ai-edit-glossary-btn" style="background:#0078D7; color:white; border:none; padding:6px; cursor:pointer; font-weight:bold; border-radius:4px; flex:1;">📝 編輯名詞庫</button>
-                </div>
-
-                <div style="border-top:1px solid #444; margin:10px 0 5px 0; padding-top:10px; color:#bbb;">語言設定:</div>
-                <label>來源: <select id="ai-source-lang-select">${langOptions}</select></label>
-                <label style="margin-top:5px; display:block;">目標: <select id="ai-target-lang-select">${langOptions}</select></label>
-
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:15px; border-radius:4px; width:100%;">儲存並重新載入</button>
-                <button id="ai-clear-cache-btn" style="background:#444; color:#ccc; border:1px solid #555; padding:8px; cursor:pointer; font-weight:bold; margin-top:8px; border-radius:4px; width:100%;">清除翻譯快取</button>
-            </div>
-        `;
-        
-        btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
-        const spacer = document.createElement('div'); 
-        spacer.style = "min-width: 3rem; width: 3rem;";
-        btnWrapper.parentNode.insertBefore(spacer, btnWrapper);
-
-        const popup = document.getElementById('ai-menu-popup');
-        popup.addEventListener('click', (e) => e.stopPropagation());
-        
-        document.getElementById('ai-toggle-btn').onclick = (e) => {
-            e.stopPropagation();
-            popup.style.display = popup.style.display === 'none' ? 'flex' : 'none';
-        };
-
-        document.getElementById('ai-source-lang-select').value = db.sourceLangCode;
-        document.getElementById('ai-target-lang-select').value = db.targetLangCode;
-
-        document.getElementById('ai-edit-glossary-btn').onclick = () => {
-            let url = document.getElementById('ai-glossary-input').value.trim();
-            if (url.includes('raw.githubusercontent.com')) {
-                url = url.replace('raw.githubusercontent.com', 'github.com').replace('/main/', '/blob/main/').replace('/master/', '/blob/master/');
-            } else if (url.includes('github.com') && url.includes('/raw/')) {
-                url = url.replace('/raw/refs/heads/', '/blob/').replace('/raw/', '/blob/');
-            }
-            if (url) window.open(url, '_blank');
-        };
-
-        document.getElementById('ai-save-btn').onclick = () => {
-            db.isEnabled = document.getElementById('ai-cb-enable').checked;
-            db.aiModel = document.getElementById('ai-model-input').value.trim() || 'translategemma:4b';
-            db.glossaryUrl = document.getElementById('ai-glossary-input').value.trim();
-            
-            const sourceSelect = document.getElementById('ai-source-lang-select');
-            db.sourceLangCode = sourceSelect.value;
-            db.sourceLangName = sourceSelect.options[sourceSelect.selectedIndex].getAttribute('data-name');
-            
-            const targetSelect = document.getElementById('ai-target-lang-select');
-            db.targetLangCode = targetSelect.value;
-            db.targetLangName = targetSelect.options[targetSelect.selectedIndex].getAttribute('data-name');
-            
-            location.reload();
-        };
-
-        document.getElementById('ai-clear-cache-btn').onclick = () => {
-            if (confirm('確定要清除所有 24 小時內嘅翻譯記錄？\n清除後所有字幕需要重新呼叫 AI 翻譯。')) {
-                GM_setValue('ai_subtitle_cache', {});
-                alert('快取已清除！');
-                location.reload();
-            }
-        };
-
-        document.addEventListener('click', (e) => { 
-            if (popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none'; 
-        });
+        currentAbortController = null;
     }
 
     const observer = new MutationObserver(() => {
         injectControlMenu(); 
-        if (!db.isEnabled) return;
+        if (!db.isEnabled || !window.location.pathname.includes('/watch/')) return;
 
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
-
             const currentMatchKey = getMatchKey(container.innerText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
-
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
-                outerSpan.style.textAlign = "center";
-                outerSpan.style.display = "inline-block";
-
                 const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
                 if (!innerSpan) return;
-
                 const style = window.getComputedStyle(innerSpan);
-                const isVertical = style.writingMode && style.writingMode.includes('vertical');
-
-                if (!isVertical) {
-                    container.style.left = "50%";
-                    container.style.transform = "translateX(-50%)";
-                    container.style.whiteSpace = "nowrap";
-                }
-
                 const baseFontSize = parseFloat(style.fontSize);
                 const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => s.getAttribute('lang') !== 'zh' && !s.classList.contains('ai-translated-span'));
                 originalSpans.forEach(s => s.style.fontSize = (baseFontSize * 0.8) + "px");
-
                 const br = document.createElement('br');
                 br.className = 'ai-translated-br';
                 outerSpan.appendChild(br);
-
                 const aiSpan = innerSpan.cloneNode(true);
                 aiSpan.classList.add('ai-translated-span');
                 aiSpan.setAttribute('lang', 'zh');
                 aiSpan.style.fontSize = baseFontSize + "px";
                 aiSpan.innerText = translatedText;
-
                 outerSpan.appendChild(aiSpan);
                 container.dataset.aiTranslated = "true";
             }
@@ -435,4 +310,44 @@ ${text}`;
 
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
+    function injectControlMenu() {
+        if (document.getElementById('ai-subtitle-wrapper')) return;
+        const targetBtn = document.querySelector('[data-uia="control-audio-subtitle"]');
+        if (!targetBtn) return;
+        const btnWrapper = targetBtn.closest('div.medium') || targetBtn.parentElement;
+        const wrapper = document.createElement('div');
+        wrapper.id = 'ai-subtitle-wrapper';
+        wrapper.style.display = 'flex';
+        const langOptions = SUPPORTED_LANGUAGES.map(lang => `<option value="${lang.code}" data-name="${lang.name}">${lang.name}</option>`).join('');
+        wrapper.innerHTML = `<div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:#FFD700; font-weight:bold;">AI</button></div>
+            <div id="ai-menu-popup">
+                <label><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 Ollama</label>
+                <label>模型: <input type="text" id="ai-model-input" value="${db.aiModel}"></label>
+                <label>Glossary JSON: <input type="text" id="ai-glossary-input" value="${db.glossaryUrl}"></label>
+                <button id="ai-edit-glossary-btn" style="background:#0078D7; color:white; border:none; padding:6px; border-radius:4px;">📝 編輯名詞庫</button>
+                <label>來源: <select id="ai-source-lang-select">${langOptions}</select></label>
+                <label>目標: <select id="ai-target-lang-select">${langOptions}</select></label>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; border-radius:4px;">儲存並刷新</button>
+                <button id="ai-clear-cache-btn" style="background:#444; color:#ccc; border:none; padding:8px; border-radius:4px;">清除快取</button>
+            </div>`;
+        btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
+        const popup = document.getElementById('ai-menu-popup');
+        document.getElementById('ai-toggle-btn').onclick = (e) => { e.stopPropagation(); popup.style.display = popup.style.display === 'none' ? 'flex' : 'none'; };
+        document.getElementById('ai-source-lang-select').value = db.sourceLangCode;
+        document.getElementById('ai-target-lang-select').value = db.targetLangCode;
+        document.getElementById('ai-edit-glossary-btn').onclick = () => {
+            let url = db.glossaryUrl.replace('raw.githubusercontent.com', 'github.com').replace('/raw/refs/heads/', '/blob/').replace('/raw/', '/blob/');
+            window.open(url, '_blank');
+        };
+        document.getElementById('ai-save-btn').onclick = () => {
+            db.isEnabled = document.getElementById('ai-cb-enable').checked;
+            db.aiModel = document.getElementById('ai-model-input').value.trim();
+            db.glossaryUrl = document.getElementById('ai-glossary-input').value.trim();
+            db.sourceLangCode = document.getElementById('ai-source-lang-select').value;
+            db.targetLangCode = document.getElementById('ai-target-lang-select').value;
+            location.reload();
+        };
+        document.getElementById('ai-clear-cache-btn').onclick = () => { if (confirm('清除快取？')) { GM_setValue('ai_subtitle_cache', {}); location.reload(); } };
+        document.addEventListener('click', (e) => { if (!wrapper.contains(e.target)) popup.style.display = 'none'; });
+    }
 })();
