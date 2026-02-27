@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (精確 Prompt 鎖定版 v4.20)
-// @version      4.20.0
-// @description  使用指定精確 Prompt，支援任務中斷與 24 小時快取，僅在播放頁運行。
+// @name         Netflix AI 字幕 (恢復完美置中版 v4.21)
+// @version      4.21.0
+// @description  修正 Observer 樣式，還原 v4.18.0 的完美置中對齊邏輯。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.20.0";
+    const SCRIPT_VERSION = "4.21.0";
     let currentAbortController = null;
 
     const db = {
@@ -225,7 +225,6 @@
                 continue; 
             }
 
-            // 完全使用你指定的精確 Prompt 格式
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
 Additional requirements:
@@ -277,31 +276,55 @@ ${text}`;
         currentAbortController = null;
     }
 
+    // --- 100% 還原 v4.18.0 的完美置中渲染邏輯 ---
     const observer = new MutationObserver(() => {
         injectControlMenu(); 
         if (!db.isEnabled || !window.location.pathname.includes('/watch/')) return;
 
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
+
             const currentMatchKey = getMatchKey(container.innerText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
+
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
+                
+                // 置中對齊關鍵
+                outerSpan.style.textAlign = "center";
+                outerSpan.style.display = "inline-block";
+
                 const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
                 if (!innerSpan) return;
+
                 const style = window.getComputedStyle(innerSpan);
+                const isVertical = style.writingMode && style.writingMode.includes('vertical');
+
+                if (!isVertical) {
+                    container.style.left = "50%";
+                    container.style.transform = "translateX(-50%)";
+                    container.style.whiteSpace = "nowrap";
+                }
+
                 const baseFontSize = parseFloat(style.fontSize);
                 const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => s.getAttribute('lang') !== 'zh' && !s.classList.contains('ai-translated-span'));
-                originalSpans.forEach(s => s.style.fontSize = (baseFontSize * 0.8) + "px");
+                
+                // 縮小原文
+                originalSpans.forEach(s => {
+                    s.style.fontSize = (baseFontSize * 0.8) + "px";
+                });
+
                 const br = document.createElement('br');
                 br.className = 'ai-translated-br';
                 outerSpan.appendChild(br);
+
                 const aiSpan = innerSpan.cloneNode(true);
                 aiSpan.classList.add('ai-translated-span');
                 aiSpan.setAttribute('lang', 'zh');
                 aiSpan.style.fontSize = baseFontSize + "px";
                 aiSpan.innerText = translatedText;
+
                 outerSpan.appendChild(aiSpan);
                 container.dataset.aiTranslated = "true";
             }
