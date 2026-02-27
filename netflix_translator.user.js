@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (精確鎖定與任務中斷版 v4.19)
-// @version      4.19.0
-// @description  僅在 /watch/ 頁面運行，網址變更時立刻中斷翻譯任務，節省效能。
+// @name         Netflix AI 字幕 (精確 Prompt 鎖定版 v4.20)
+// @version      4.20.0
+// @description  使用指定精確 Prompt，支援任務中斷與 24 小時快取，僅在播放頁運行。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,8 +17,8 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.19.0";
-    let currentAbortController = null; // 用於中斷請求
+    const SCRIPT_VERSION = "4.20.0";
+    let currentAbortController = null;
 
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
@@ -68,7 +68,6 @@
         return match ? match[1] : 'unknown_hash';
     }
 
-    // --- 中斷任務邏輯 ---
     function abortPreviousTasks() {
         if (currentAbortController) {
             console.log("%c[System] 網址變更，中止進行中的翻譯任務。", "color: #FF4500; font-weight: bold;");
@@ -76,12 +75,11 @@
             currentAbortController = null;
         }
         window.isAITranslating = false;
-        window.processedUrls.clear(); // 切換影片後清空，否則新影片字幕會無法讀取
+        window.processedUrls.clear();
         let loader = document.getElementById('ai-translation-loader');
         if (loader) loader.style.display = 'none';
     }
 
-    // 監聽網址變化 (SPA 導航)
     let lastPath = window.location.pathname;
     setInterval(() => {
         if (window.location.pathname !== lastPath) {
@@ -167,7 +165,6 @@
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
-                // 僅在 watch 頁面執行翻譯
                 if (!window.location.pathname.includes('/watch/')) return;
                 await processAndTranslate(this.responseText, url);
             });
@@ -197,7 +194,7 @@
         const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
         const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        let glossaryRules = glossaryPairs.length > 0 ? `\n7. STRICT GLOSSARY: ${glossaryPairs.join(', ')}\n` : "";
+        let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY: ${glossaryPairs.join(', ')}\n` : "";
 
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
@@ -212,7 +209,6 @@
         let totalAiTimeMs = 0;
 
         for (let i = 0; i < total; i++) {
-            // 如果任務被中斷，立刻退出迴圈
             if (currentAbortController?.signal.aborted) return;
 
             const text = originalLines[i];
@@ -229,16 +225,20 @@
                 continue; 
             }
 
-            const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Produce only the ${db.targetLangName} translation.
-
+            // 完全使用你指定的精確 Prompt 格式
+            const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
+Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
 Additional requirements:
-1. STRICT TARGET LANGUAGE ONLY: NO English, Japanese, or Korean allowed in output.
-2. SYMBOLS: Retain symbols like ⸺ naturally.
-3. SLANG: Translate colloquialisms like "うっさい" accurately (e.g., 吵死了).
-4. NO REFUSALS: ALWAYS force a translation.
-5. STYLE: Natural ${db.targetLangName} dialogue.${glossaryRules}
+1. STRICT SCRIPT RULE: The final output MUST BE ENTIRELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY Japanese Kana (Hiragana/Katakana), Romaji, or Korean Hangul in the translated text.
+2. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
+3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context. Do not hallucinate meanings.
+4. KATAKANA RULE: You MUST translate Katakana terms (e.g., ラーメン, ビルビルダー) into their proper ${db.targetLangName} equivalents (e.g., 拉麵, 健美先生). Do NOT just copy them or use other languages.
+5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation, even for repeated words or sound effects.
+6. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.
+7. STYLE: Ensure the dialogue sounds natural and fluent in ${db.targetLangName}. Avoid machine-like translations.${glossaryRules}
+Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:
 
-Please translate:
+
 ${text}`;
 
             const startTime = Date.now();
