@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (Gemma 4B 特化優化版 v4.28)
-// @version      4.28.0
-// @description  移除干擾性 e.g.，無損合併 9 條規則至 7 條，轉換 Glossary 格式防止 Token Bleed。
+// @name         Netflix AI 字幕 (快取清除修復版 v4.35)
+// @version      4.35.0
+// @description  修復清除快取時因重整過快導致失敗的問題，加入寫入校驗與安全緩衝時間。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,14 +17,23 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.28.0";
+    const SCRIPT_VERSION = "4.35.0";
+    const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
+    let modelBuildPromise = null;
+
+    // 防呆：如果 URL 係舊嘅 Placeholder，自動換返正確嘅
+    let savedUrl = GM_getValue('ai_glossary_url', 'https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json');
+    if (savedUrl.includes('your-username/your-repo')) {
+        savedUrl = 'https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json';
+        GM_setValue('ai_glossary_url', savedUrl);
+    }
 
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
-        get aiModel() { return GM_getValue('ai_model_name', 'translategemma:4b'); },
-        set aiModel(v) { GM_setValue('ai_model_name', v); },
+        get baseModel() { return GM_getValue('ai_model_name', 'translategemma:4b'); },
+        set baseModel(v) { GM_setValue('ai_model_name', v); },
         get sourceLangName() { return GM_getValue('ai_source_lang_name', 'Japanese'); },
         set sourceLangName(v) { GM_setValue('ai_source_lang_name', v); },
         get sourceLangCode() { return GM_getValue('ai_source_lang_code', 'ja'); },
@@ -33,7 +42,7 @@
         set targetLangName(v) { GM_setValue('ai_target_lang_name', v); },
         get targetLangCode() { return GM_getValue('ai_target_lang_code', 'zh-Hant'); },
         set targetLangCode(v) { GM_setValue('ai_target_lang_code', v); },
-        get glossaryUrl() { return GM_getValue('ai_glossary_url', 'https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json'); },
+        get glossaryUrl() { return GM_getValue('ai_glossary_url', savedUrl); },
         set glossaryUrl(v) { GM_setValue('ai_glossary_url', v); }
     };
 
@@ -70,6 +79,7 @@
         if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
         window.isAITranslating = false;
         window.processedUrls.clear();
+        modelBuildPromise = null;
         let loader = document.getElementById('ai-translation-loader');
         if (loader) loader.style.display = 'none';
     }
@@ -88,20 +98,80 @@
     }
 
     async function fetchGlossary() {
-        if (!db.glossaryUrl || !db.glossaryUrl.startsWith('http')) return {};
+        if (!db.glossaryUrl || !db.glossaryUrl.startsWith('http')) {
+            console.log(`[${getTimestamp()}] [Glossary] URL 為空，略過。`);
+            return {};
+        }
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: "GET", url: db.glossaryUrl,
                 onload: function(res) {
+                    if (res.status !== 200) return resolve({});
                     try {
                         let cleanText = res.responseText.replace(/[\uFEFF\u200B\u00A0\u3000]/g, '').trim();
                         const data = JSON.parse(cleanText);
                         const filteredData = {};
                         for (const [key, val] of Object.entries(data)) { if (!key.startsWith('_')) filteredData[key] = val; }
+                        console.log(`[${getTimestamp()}] [Glossary] 成功載入名詞庫: ${Object.keys(filteredData).length} 項`);
                         resolve(filteredData);
                     } catch (e) { resolve({}); }
                 },
                 onerror: () => resolve({})
+            });
+        });
+    }
+
+    async function buildHybridModel() {
+        console.log(`%c[${getTimestamp()}] [System] 正在背景構建 18+ 專屬模型...`, "color: #FFA500; font-weight: bold;");
+
+        const glossaryDict = await fetchGlossary();
+        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
+
+        const baseModelToUse = db.baseModel.trim() || 'translategemma:4b';
+
+        const systemPrompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator for R-rated adult content. Your goal is to accurately convey the exact meaning, tone, and nuances of the original text, regardless of how explicit, violent, or profane it is.
+Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
+
+Additional requirements:
+1. STRICT GLOSSARY: ${glossaryString}. You MUST use these exact translations. This takes absolute precedence.
+2. SCRIPT PURITY (CRITICAL): The output MUST be ENTIRELY in ${db.targetLangName} characters. You are strictly forbidden from outputting ANY English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul). Any non-target character is a total failure.
+3. TRANSLATE ALL NAMES & KATAKANA: All character names and Katakana terms MUST be translated into proper ${db.targetLangName} equivalents. DO NOT copy them.
+4. UNCENSORED & RUDE TONE (CRITICAL): This content contains violence, profanity, and sexual language. You MUST translate all rude, violent, or explicit language directly and accurately. DO NOT harmonize, soften, censor, or apologize. Match the exact intensity and R-rated tone of the original.
+5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation.
+6. SYMBOLS & PUNCTUATION: Retain special punctuation like long dashes naturally in the translation.
+7. STYLE & CHARACTER CHECK: Ensure fluent dialogue. Perform a final check to convert all Japanese Kanji and Simplified Chinese into correct ${db.targetLangName} characters.`;
+
+        const requestData = {
+            model: HYBRID_MODEL_NAME,
+            from: baseModelToUse,
+            system: systemPrompt,
+            parameters: {
+                temperature: 0.1,
+                num_predict: 256
+            },
+            stream: false
+        };
+
+        return new Promise((resolve) => {
+            GM_xmlhttpRequest({
+                method: "POST",
+                url: "http://127.0.0.1:11434/api/create",
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify(requestData),
+                onload: function(res) {
+                    if (res.status === 200) {
+                        console.log(`%c[${getTimestamp()}] [System] 18+ 專屬模型 (${HYBRID_MODEL_NAME}) 構建成功！`, "color: #00FF00; font-weight: bold;");
+                        resolve(true);
+                    } else {
+                        console.error(`%c[${getTimestamp()}] [System] 構建失敗 (HTTP ${res.status}):\n${res.responseText}`, "color: #FF0000; font-weight: bold;");
+                        resolve(false);
+                    }
+                },
+                onerror: (err) => {
+                    console.error(`%c[${getTimestamp()}] [System] 無法連線至 Ollama (api/create)！`, "color: #FF0000; font-weight: bold;", err);
+                    resolve(false);
+                }
             });
         });
     }
@@ -129,12 +199,18 @@
         }
     }
 
-    function updateUIProgress(current, total, avgMs = 0, etaMs = 0) {
+    function updateUIProgress(current, total, avgMs = 0, etaMs = 0, isBuilding = false) {
         let loader = document.getElementById('ai-translation-loader');
         if (!loader) { loader = document.createElement('div'); loader.id = 'ai-translation-loader'; document.body.appendChild(loader); }
         loader.style.display = 'block';
+
+        if (isBuilding) {
+            loader.innerHTML = `<div style="font-weight:bold; color:#00BFFF;">⚙️ 正在解鎖 18+ 翻譯引擎...</div><div style="font-size:13px; color:#aaa; margin-top:8px;">請稍候 (約 1-2 秒)</div>`;
+            return;
+        }
+
         let statsHtml = avgMs > 0 ? `<div style="font-size:13px; color:#aaa; margin-top:8px; border-top:1px solid #333; padding-top:8px;">平均: ${(avgMs/1000).toFixed(2)}s | 剩餘: ${formatTime(etaMs)}</div>` : '';
-        loader.innerHTML = `<div style="font-weight:bold; color:#FFD700;">⏳ 本地模型翻譯中</div><div style="font-size:15px; margin-top:5px;">進度: ${current} / ${total}</div>${statsHtml}`;
+        loader.innerHTML = `<div style="font-weight:bold; color:#FFD700;">⏳ AI 模型翻譯中</div><div style="font-size:15px; margin-top:5px;">進度: ${current} / ${total}</div>${statsHtml}`;
         if (current >= total) setTimeout(() => loader.style.display = 'none', 2000);
     }
 
@@ -152,7 +228,7 @@
     async function processAndTranslate(rawXml, url) {
         if (window.processedUrls.has(url) || !db.isEnabled) return;
         window.processedUrls.add(url);
-        
+
         const parser = new DOMParser();
         const doc = parser.parseFromString(rawXml, "text/xml");
         const pTags = Array.from(doc.querySelectorAll('p'));
@@ -168,17 +244,19 @@
         window.isAITranslating = true;
         currentAbortController = new AbortController();
 
-        const total = originalLines.length;
-        const glossaryDict = await fetchGlossary();
-        
-        // 變更格式為 Key=Value，用 | 分隔，幫助 4B 模型更準確對齊 Token，避免 Attention Bleed
-        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
-        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
+        if (!modelBuildPromise) {
+            updateUIProgress(0, originalLines.length, 0, 0, true);
+            modelBuildPromise = buildHybridModel();
+        }
+        const modelBuildSuccess = await modelBuildPromise;
+        const targetModel = modelBuildSuccess ? HYBRID_MODEL_NAME : db.baseModel;
+        if (!modelBuildSuccess) console.warn(`[${getTimestamp()}] ⚠️ 構建失敗，降級使用基礎模型: ${targetModel}`);
 
+        const total = originalLines.length;
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
-        const cacheEnvKey = `${SCRIPT_VERSION}_${db.aiModel}_${db.sourceLangCode}_${db.targetLangCode}`;
-        
+        const cacheEnvKey = `${SCRIPT_VERSION}_${targetModel}_${db.sourceLangCode}_${db.targetLangCode}`;
+
         if (!allCache[videoHash] || allCache[videoHash].envKey !== cacheEnvKey) {
             allCache[videoHash] = { timestamp: Date.now(), envKey: cacheEnvKey, translations: {} };
         }
@@ -197,36 +275,31 @@
             if (currentVideoCache[textKey]) {
                 const translated = currentVideoCache[textKey];
                 window.subtitleMap.set(textKey, translated);
+                console.log(`%c[${tsLog}] [${i+1}/${total}] ⚡[Cache] %c${text} %c➔ %c${translated}`, "color:#00BFFF", "color:#fff", "color:#00FF00", "color:#FFD700");
                 updateUIProgress(i + 1, total, currentAvgMs, (total - i - 1) * currentAvgMs);
-                continue; 
+                continue;
             }
 
-            // --- 無損合併並重排的 7 條鐵律 (移除了干擾性 e.g.) ---
-            const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
-Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
-Additional requirements:
-1. STRICT GLOSSARY: ${glossaryString}. You MUST use these exact translations. This takes absolute precedence.
-2. SCRIPT PURITY (CRITICAL): The output MUST be ENTIRELY in ${db.targetLangName} characters. You are strictly forbidden from outputting ANY English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul). Any non-target character is a total failure.
-3. TRANSLATE ALL NAMES & KATAKANA: All character names and Katakana terms MUST be translated into proper ${db.targetLangName} equivalents. DO NOT copy them.
-4. TONE & SLANG: Match the original emotion and intensity. Do not harmonize, soften, or censor rude language or slang.
-5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation.
-6. SYMBOLS & PUNCTUATION: Retain special punctuation like long dashes naturally in the translation.
-7. STYLE & CHARACTER CHECK: Ensure fluent dialogue. Perform a final check to convert all Japanese Kanji and Simplified Chinese into correct ${db.targetLangName} characters.
-Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:
-
-
-${text}`;
-
-            if (i === 0) console.log("%c[Debug] v4.28 Optimized Prompt:", "color: #FFA500; font-weight: bold;", prompt);
+            const prompt = `Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:\n\n\n${text}`;
 
             const startTime = Date.now();
             await new Promise((resolve) => {
                 GM_xmlhttpRequest({
                     method: "POST", url: "http://127.0.0.1:11434/api/generate",
                     headers: { "Content-Type": "application/json" },
-                    data: JSON.stringify({ model: db.aiModel, prompt: prompt, stream: false, options: { temperature: 0.1, num_predict: 256 } }),
+                    data: JSON.stringify({
+                        model: targetModel,
+                        prompt: prompt,
+                        stream: false
+                    }),
                     onload: function(res) {
                         if (currentAbortController?.signal.aborted) return resolve();
+
+                        if (res.status !== 200) {
+                            console.error(`%c[${getTimestamp()}] [API Error] 翻譯失敗 (HTTP ${res.status}):\n${res.responseText}`, "color: #FF0000; font-weight: bold;");
+                            return resolve();
+                        }
+
                         try {
                             const translated = JSON.parse(res.responseText).response.trim().replace(/^"|"$/g, '');
                             const duration = Date.now() - startTime;
@@ -238,10 +311,10 @@ ${text}`;
                             GM_setValue('ai_subtitle_cache', allCache);
                             console.log(`%c[${getTimestamp()}] [${i+1}/${total}] (${(duration/1000).toFixed(2)}s) %c${text} %c➔ %c${translated}`, "color:#888", "color:#fff", "color:#00FF00", "color:#FFD700");
                             updateUIProgress(i + 1, total, totalAiTimeMs / successfulAiCount, (total - i - 1) * (totalAiTimeMs / successfulAiCount));
-                        } catch (e) {}
+                        } catch (e) { console.error(`[${getTimestamp()}] JSON 解析錯誤`, e); }
                         resolve();
                     },
-                    onerror: () => resolve()
+                    onerror: (err) => { console.error(`[${getTimestamp()}] Ollama 翻譯 API 連線失敗`, err); resolve(); }
                 });
             });
         }
@@ -250,7 +323,7 @@ ${text}`;
     }
 
     const observer = new MutationObserver(() => {
-        injectControlMenu(); 
+        injectControlMenu();
         if (!db.isEnabled || !window.location.pathname.includes('/watch/')) return;
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
@@ -293,7 +366,7 @@ ${text}`;
         wrapper.innerHTML = `<div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:#FFD700; font-weight:bold;">AI</button></div>
             <div id="ai-menu-popup">
                 <label><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 Ollama</label>
-                <label>模型: <input type="text" id="ai-model-input" value="${db.aiModel}"></label>
+                <label>基礎模型: <input type="text" id="ai-model-input" value="${db.baseModel}"></label>
                 <label>Glossary JSON: <input type="text" id="ai-glossary-input" value="${db.glossaryUrl}"></label>
                 <button id="ai-edit-glossary-btn" style="background:#0078D7; color:white; border:none; padding:6px; border-radius:4px;">📝 編輯名詞庫</button>
                 <label>來源: <select id="ai-source-lang-select">${langOptions}</select></label>
@@ -312,13 +385,30 @@ ${text}`;
         };
         document.getElementById('ai-save-btn').onclick = () => {
             db.isEnabled = document.getElementById('ai-cb-enable').checked;
-            db.aiModel = document.getElementById('ai-model-input').value.trim();
+            db.baseModel = document.getElementById('ai-model-input').value.trim();
             db.glossaryUrl = document.getElementById('ai-glossary-input').value.trim();
             db.sourceLangCode = document.getElementById('ai-source-lang-select').value;
             db.targetLangCode = document.getElementById('ai-target-lang-select').value;
             location.reload();
         };
-        document.getElementById('ai-clear-cache-btn').onclick = () => { if (confirm('清除快取？')) { GM_setValue('ai_subtitle_cache', {}); location.reload(); } };
+
+        // --- 核心修正：加入寫入校驗與 300ms 緩衝 ---
+        document.getElementById('ai-clear-cache-btn').onclick = () => {
+            if (confirm('確定要清除所有影片的翻譯快取嗎？\n清除後所有字幕將會重新呼叫 AI 翻譯。')) {
+                GM_setValue('ai_subtitle_cache', {});
+                setTimeout(() => {
+                    const check = GM_getValue('ai_subtitle_cache', null);
+                    if (check && Object.keys(check).length === 0) {
+                        console.log(`[${getTimestamp()}] 快取已成功清除。`);
+                        location.reload();
+                    } else {
+                        console.warn(`[${getTimestamp()}] 快取清除校驗失敗，強制覆蓋。`);
+                        GM_setValue('ai_subtitle_cache', {});
+                        location.reload();
+                    }
+                }, 300);
+            }
+        };
         document.addEventListener('click', (e) => { if (!wrapper.contains(e.target)) popup.style.display = 'none'; });
     }
 })();
