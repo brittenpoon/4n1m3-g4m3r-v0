@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (名詞庫強化 + 大按鈕版 v4.22)
-// @version      4.22.0
-// @description  強化 Glossary 指令 (含譯名與俚語)，加大 UI 按鈕，保留置中與任務中斷功能。
+// @name         Netflix AI 字幕 (語言強制封鎖版 v4.23)
+// @version      4.23.0
+// @description  Rule 1 強化封鎖英俄文幻覺，恢復大尺寸 UI 按鈕。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.22.0";
+    const SCRIPT_VERSION = "4.23.0";
     let currentAbortController = null;
 
     const db = {
@@ -58,9 +58,7 @@
     function formatTime(ms) {
         if (ms === 0 || isNaN(ms)) return "--";
         const totalSec = Math.floor(ms / 1000);
-        const m = Math.floor(totalSec / 60);
-        const s = totalSec % 60;
-        return m > 0 ? `${m}分 ${s}秒` : `${s}秒`;
+        return totalSec > 60 ? `${Math.floor(totalSec/60)}分 ${totalSec%60}秒` : `${totalSec}秒`;
     }
 
     function getVideoHash() {
@@ -70,7 +68,6 @@
 
     function abortPreviousTasks() {
         if (currentAbortController) {
-            console.log("%c[System] 網址變更，中止進行中的翻譯任務。", "color: #FF4500; font-weight: bold;");
             currentAbortController.abort();
             currentAbortController = null;
         }
@@ -95,10 +92,7 @@
         const ONE_DAY = 24 * 60 * 60 * 1000;
         let isChanged = false;
         for (let hash in cache) {
-            if (now - cache[hash].timestamp > ONE_DAY) {
-                delete cache[hash];
-                isChanged = true;
-            }
+            if (now - cache[hash].timestamp > ONE_DAY) { delete cache[hash]; isChanged = true; }
         }
         if (isChanged) GM_setValue('ai_subtitle_cache', cache);
         return cache;
@@ -108,16 +102,13 @@
         if (!db.glossaryUrl || !db.glossaryUrl.startsWith('http')) return {};
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
-                method: "GET",
-                url: db.glossaryUrl,
+                method: "GET", url: db.glossaryUrl,
                 onload: function(res) {
                     try {
                         let cleanText = res.responseText.replace(/[\uFEFF\u200B\u00A0\u3000]/g, '').trim();
                         const data = JSON.parse(cleanText);
                         const filteredData = {};
-                        for (const [key, val] of Object.entries(data)) {
-                            if (!key.startsWith('_') && key.trim() !== "") filteredData[key] = val;
-                        }
+                        for (const [key, val] of Object.entries(data)) { if (!key.startsWith('_')) filteredData[key] = val; }
                         resolve(filteredData);
                     } catch (e) { resolve({}); }
                 },
@@ -133,8 +124,9 @@
         .ai-translated-span { display: inline-block !important; color: #FFD700 !important; font-weight: bold; text-shadow: 2px 2px 4px #000 !important; }
         #ai-menu-popup { display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.95); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; font-size:14px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); max-height: 80vh; overflow-y: auto; }
         #ai-menu-popup select, #ai-menu-popup input[type="text"] { background:#333; color:white; padding:6px; border:1px solid #666; border-radius:4px; outline:none; width:100%; margin-top:4px; box-sizing: border-box; }
-        /* 增加 AI 按鈕大細 */
-        #ai-toggle-btn { font-size: 18px !important; padding: 4px 12px !important; line-height: 1.2 !important; }
+        
+        /* 還原上一版本較大的按鈕樣式 */
+        #ai-toggle-btn { font-size: 18px !important; padding: 8px 16px !important; line-height: 1 !important; height: auto !important; min-width: 50px !important; }
     `);
 
     const events = ['copy', 'contextmenu', 'selectstart', 'mousedown', 'mouseup'];
@@ -152,11 +144,7 @@
 
     function updateUIProgress(current, total, avgMs = 0, etaMs = 0) {
         let loader = document.getElementById('ai-translation-loader');
-        if (!loader) {
-            loader = document.createElement('div');
-            loader.id = 'ai-translation-loader';
-            document.body.appendChild(loader);
-        }
+        if (!loader) { loader = document.createElement('div'); loader.id = 'ai-translation-loader'; document.body.appendChild(loader); }
         loader.style.display = 'block';
         let statsHtml = avgMs > 0 ? `<div style="font-size:13px; color:#aaa; margin-top:8px; border-top:1px solid #333; padding-top:8px;">平均: ${(avgMs/1000).toFixed(2)}s | 剩餘: ${formatTime(etaMs)}</div>` : '';
         loader.innerHTML = `<div style="font-weight:bold; color:#FFD700;">⏳ 本地模型翻譯中</div><div style="font-size:15px; margin-top:5px;">進度: ${current} / ${total}</div>${statsHtml}`;
@@ -196,7 +184,6 @@
         const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
         const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        // 強化名詞庫指令描述
         let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY (Preferred names, slang, and terms): ${glossaryPairs.join(', ')}\n` : "";
 
         const videoHash = getVideoHash();
@@ -213,25 +200,24 @@
 
         for (let i = 0; i < total; i++) {
             if (currentAbortController?.signal.aborted) return;
-
             const text = originalLines[i];
             const textKey = getMatchKey(text);
             const tsLog = getTimestamp();
             const currentAvgMs = successfulAiCount > 0 ? (totalAiTimeMs / successfulAiCount) : 0;
-            const remainingLines = total - i - 1;
 
             if (currentVideoCache[textKey]) {
                 const translated = currentVideoCache[textKey];
                 window.subtitleMap.set(textKey, translated);
                 console.log(`%c[${tsLog}] [${i+1}/${total}] ⚡[Cache] %c${text} %c➔ %c${translated}`, "color:#00BFFF", "color:#fff", "color:#00FF00", "color:#FFD700");
-                updateUIProgress(i + 1, total, currentAvgMs, remainingLines * currentAvgMs);
+                updateUIProgress(i + 1, total, currentAvgMs, (total - i - 1) * currentAvgMs);
                 continue; 
             }
 
+            // 修改後的 Rule 1：強制排除所有非目標語言字元
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
 Additional requirements:
-1. STRICT SCRIPT RULE: The final output MUST BE ENTIRELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY Japanese Kana (Hiragana/Katakana), Romaji, or Korean Hangul in the translated text.
+1. STRICT SCRIPT RULE: The final output MUST BE ENTIRELY and EXCLUSIVELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY non-target characters, including English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul).
 2. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
 3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context. Do not hallucinate meanings.
 4. KATAKANA RULE: You MUST translate Katakana terms (e.g., ラーメン, ビルビルダー) into their proper ${db.targetLangName} equivalents (e.g., 拉麵, 健美先生). Do NOT just copy them or use other languages.
@@ -246,15 +232,9 @@ ${text}`;
             const startTime = Date.now();
             await new Promise((resolve) => {
                 GM_xmlhttpRequest({
-                    method: "POST",
-                    url: "http://127.0.0.1:11434/api/generate",
+                    method: "POST", url: "http://127.0.0.1:11434/api/generate",
                     headers: { "Content-Type": "application/json" },
-                    data: JSON.stringify({
-                        model: db.aiModel,
-                        prompt: prompt,
-                        stream: false,
-                        options: { temperature: 0.1, num_predict: 256 }
-                    }),
+                    data: JSON.stringify({ model: db.aiModel, prompt: prompt, stream: false, options: { temperature: 0.1, num_predict: 256 } }),
                     onload: function(res) {
                         if (currentAbortController?.signal.aborted) return resolve();
                         try {
@@ -267,7 +247,7 @@ ${text}`;
                             allCache[videoHash].translations = currentVideoCache;
                             GM_setValue('ai_subtitle_cache', allCache);
                             console.log(`%c[${getTimestamp()}] [${i+1}/${total}] (${(duration/1000).toFixed(2)}s) %c${text} %c➔ %c${translated}`, "color:#888", "color:#fff", "color:#00FF00", "color:#FFD700");
-                            updateUIProgress(i + 1, total, totalAiTimeMs / successfulAiCount, remainingLines * (totalAiTimeMs / successfulAiCount));
+                            updateUIProgress(i + 1, total, totalAiTimeMs / successfulAiCount, (total - i - 1) * (totalAiTimeMs / successfulAiCount));
                         } catch (e) {}
                         resolve();
                     },
@@ -285,46 +265,27 @@ ${text}`;
 
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
-
             const currentMatchKey = getMatchKey(container.innerText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
-
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
-                
                 outerSpan.style.textAlign = "center";
                 outerSpan.style.display = "inline-block";
-
                 const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
                 if (!innerSpan) return;
-
                 const style = window.getComputedStyle(innerSpan);
                 const isVertical = style.writingMode && style.writingMode.includes('vertical');
-
-                if (!isVertical) {
-                    container.style.left = "50%";
-                    container.style.transform = "translateX(-50%)";
-                    container.style.whiteSpace = "nowrap";
-                }
-
+                if (!isVertical) { container.style.left = "50%"; container.style.transform = "translateX(-50%)"; container.style.whiteSpace = "nowrap"; }
                 const baseFontSize = parseFloat(style.fontSize);
                 const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => s.getAttribute('lang') !== 'zh' && !s.classList.contains('ai-translated-span'));
-                
-                originalSpans.forEach(s => {
-                    s.style.fontSize = (baseFontSize * 0.8) + "px";
-                });
-
-                const br = document.createElement('br');
-                br.className = 'ai-translated-br';
-                outerSpan.appendChild(br);
-
+                originalSpans.forEach(s => s.style.fontSize = (baseFontSize * 0.8) + "px");
+                const br = document.createElement('br'); br.className = 'ai-translated-br'; outerSpan.appendChild(br);
                 const aiSpan = innerSpan.cloneNode(true);
                 aiSpan.classList.add('ai-translated-span');
                 aiSpan.setAttribute('lang', 'zh');
                 aiSpan.style.fontSize = baseFontSize + "px";
                 aiSpan.innerText = translatedText;
-
                 outerSpan.appendChild(aiSpan);
                 container.dataset.aiTranslated = "true";
             }
@@ -339,8 +300,7 @@ ${text}`;
         if (!targetBtn) return;
         const btnWrapper = targetBtn.closest('div.medium') || targetBtn.parentElement;
         const wrapper = document.createElement('div');
-        wrapper.id = 'ai-subtitle-wrapper';
-        wrapper.style.display = 'flex';
+        wrapper.id = 'ai-subtitle-wrapper'; wrapper.style.display = 'flex';
         const langOptions = SUPPORTED_LANGUAGES.map(lang => `<option value="${lang.code}" data-name="${lang.name}">${lang.name}</option>`).join('');
         wrapper.innerHTML = `<div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:#FFD700; font-weight:bold;">AI</button></div>
             <div id="ai-menu-popup">
