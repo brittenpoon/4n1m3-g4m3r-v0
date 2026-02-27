@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (恢復完美置中版 v4.21)
-// @version      4.21.0
-// @description  修正 Observer 樣式，還原 v4.18.0 的完美置中對齊邏輯。
+// @name         Netflix AI 字幕 (名詞庫強化 + 大按鈕版 v4.22)
+// @version      4.22.0
+// @description  強化 Glossary 指令 (含譯名與俚語)，加大 UI 按鈕，保留置中與任務中斷功能。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.21.0";
+    const SCRIPT_VERSION = "4.22.0";
     let currentAbortController = null;
 
     const db = {
@@ -133,6 +133,8 @@
         .ai-translated-span { display: inline-block !important; color: #FFD700 !important; font-weight: bold; text-shadow: 2px 2px 4px #000 !important; }
         #ai-menu-popup { display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.95); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; font-size:14px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); max-height: 80vh; overflow-y: auto; }
         #ai-menu-popup select, #ai-menu-popup input[type="text"] { background:#333; color:white; padding:6px; border:1px solid #666; border-radius:4px; outline:none; width:100%; margin-top:4px; box-sizing: border-box; }
+        /* 增加 AI 按鈕大細 */
+        #ai-toggle-btn { font-size: 18px !important; padding: 4px 12px !important; line-height: 1.2 !important; }
     `);
 
     const events = ['copy', 'contextmenu', 'selectstart', 'mousedown', 'mouseup'];
@@ -194,7 +196,8 @@
         const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
         const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY: ${glossaryPairs.join(', ')}\n` : "";
+        // 強化名詞庫指令描述
+        let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY (Preferred names, slang, and terms): ${glossaryPairs.join(', ')}\n` : "";
 
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
@@ -276,7 +279,6 @@ ${text}`;
         currentAbortController = null;
     }
 
-    // --- 100% 還原 v4.18.0 的完美置中渲染邏輯 ---
     const observer = new MutationObserver(() => {
         injectControlMenu(); 
         if (!db.isEnabled || !window.location.pathname.includes('/watch/')) return;
@@ -291,7 +293,6 @@ ${text}`;
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
                 
-                // 置中對齊關鍵
                 outerSpan.style.textAlign = "center";
                 outerSpan.style.display = "inline-block";
 
@@ -310,7 +311,6 @@ ${text}`;
                 const baseFontSize = parseFloat(style.fontSize);
                 const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => s.getAttribute('lang') !== 'zh' && !s.classList.contains('ai-translated-span'));
                 
-                // 縮小原文
                 originalSpans.forEach(s => {
                     s.style.fontSize = (baseFontSize * 0.8) + "px";
                 });
