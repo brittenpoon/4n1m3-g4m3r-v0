@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (4B 模型特化 Prompt 版 v4.16)
-// @version      4.16.0
-// @description  針對 4B 模型幻覺進行極嚴格 Prompt 限制，強制中文化片假名，並新增 zh-Hant 選項。
+// @name         Netflix AI 字幕 (預設名詞庫版 v4.17)
+// @version      4.17.0
+// @description  更新預設名詞庫 URL，完善 GitHub Raw 到 Blob 嘅捷徑轉換邏輯。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.16.0";
+    const SCRIPT_VERSION = "4.17.0";
 
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
@@ -30,13 +30,12 @@
         set sourceLangCode(v) { GM_setValue('ai_source_lang_code', v); },
         get targetLangName() { return GM_getValue('ai_target_lang_name', 'Chinese (Traditional)'); },
         set targetLangName(v) { GM_setValue('ai_target_lang_name', v); },
-        get targetLangCode() { return GM_getValue('ai_target_lang_code', 'zh-Hant'); }, // 預設改為 zh-Hant
+        get targetLangCode() { return GM_getValue('ai_target_lang_code', 'zh-Hant'); },
         set targetLangCode(v) { GM_setValue('ai_target_lang_code', v); },
-        get glossaryUrl() { return GM_getValue('ai_glossary_url', ''); },
+        get glossaryUrl() { return GM_getValue('ai_glossary_url', 'https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json'); },
         set glossaryUrl(v) { GM_setValue('ai_glossary_url', v); }
     };
 
-    // 新增 zh-Hant 選項
     const SUPPORTED_LANGUAGES = [
         { code: 'en', name: 'English' },
         { code: 'ja', name: 'Japanese' },
@@ -224,7 +223,6 @@
                 continue; 
             }
 
-            // --- 終極 4B 限制 Prompt ---
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
 
@@ -314,8 +312,8 @@ ${text}`;
 
                 <div style="border-top:1px solid #444; margin:10px 0 5px 0; padding-top:10px; color:#bbb;">名詞庫 (Glossary) JSON:</div>
                 <label>
-                    GitHub Raw URL:
-                    <input type="text" id="ai-glossary-input" value="${db.glossaryUrl}" placeholder="https://raw.githubusercontent.com/...">
+                    GitHub URL:
+                    <input type="text" id="ai-glossary-input" value="${db.glossaryUrl}">
                 </label>
                 <div style="display:flex; gap:10px; margin-top:5px;">
                     <button id="ai-edit-glossary-btn" style="background:#0078D7; color:white; border:none; padding:6px; cursor:pointer; font-weight:bold; border-radius:4px; flex:1;">📝 編輯名詞庫</button>
@@ -350,6 +348,8 @@ ${text}`;
             let url = document.getElementById('ai-glossary-input').value.trim();
             if (url.includes('raw.githubusercontent.com')) {
                 url = url.replace('raw.githubusercontent.com', 'github.com').replace('/main/', '/blob/main/').replace('/master/', '/blob/master/');
+            } else if (url.includes('github.com') && url.includes('/raw/')) {
+                url = url.replace('/raw/refs/heads/', '/blob/').replace('/raw/', '/blob/');
             }
             if (url) window.open(url, '_blank');
         };
