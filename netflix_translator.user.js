@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (指令強化版 v4.25)
-// @version      4.25.0
-// @description  強化 Rule 1 及 Rule 8 權重，新增 Rule 9 字體校對，解決英中夾雜與譯名錯誤問題。
+// @name         Netflix AI 字幕 (規則重排版 v4.27)
+// @version      4.27.0
+// @description  重排 9 項規則順序以優化 Gemma 4B 理解，強化俚語與名詞庫優先權，恢復大按鈕樣式。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.25.0";
+    const SCRIPT_VERSION = "4.27.0";
     let currentAbortController = null;
 
     const db = {
@@ -67,10 +67,7 @@
     }
 
     function abortPreviousTasks() {
-        if (currentAbortController) {
-            currentAbortController.abort();
-            currentAbortController = null;
-        }
+        if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
         window.isAITranslating = false;
         window.processedUrls.clear();
         let loader = document.getElementById('ai-translation-loader');
@@ -78,22 +75,14 @@
     }
 
     let lastPath = window.location.pathname;
-    setInterval(() => {
-        if (window.location.pathname !== lastPath) {
-            lastPath = window.location.pathname;
-            abortPreviousTasks();
-            hasPausedForCurrentClip = false;
-        }
-    }, 1000);
+    setInterval(() => { if (window.location.pathname !== lastPath) { lastPath = window.location.pathname; abortPreviousTasks(); hasPausedForCurrentClip = false; } }, 1000);
 
     function cleanAndGetCache() {
         let cache = GM_getValue('ai_subtitle_cache', {});
         const now = Date.now();
         const ONE_DAY = 24 * 60 * 60 * 1000;
         let isChanged = false;
-        for (let hash in cache) {
-            if (now - cache[hash].timestamp > ONE_DAY) { delete cache[hash]; isChanged = true; }
-        }
+        for (let hash in cache) { if (now - cache[hash].timestamp > ONE_DAY) { delete cache[hash]; isChanged = true; } }
         if (isChanged) GM_setValue('ai_subtitle_cache', cache);
         return cache;
     }
@@ -182,7 +171,7 @@
         const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
         const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        let glossaryRules = glossaryPairs.length > 0 ? `\n8. STRICT GLOSSARY PRIORITY (Preferred names, slang, and terms): ${glossaryPairs.join(', ')}. You MUST use these exact translations. This takes absolute precedence over your internal knowledge.\n` : "";
+        let glossaryRules = glossaryPairs.length > 0 ? `\n1. STRICT GLOSSARY (ja:${db.targetLangCode} MANDATORY DICTIONARY): ${glossaryPairs.join(', ')}. You MUST use these exact translations. This takes absolute precedence over all other rules.\n` : "";
 
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
@@ -210,25 +199,23 @@
                 continue; 
             }
 
-            // 修改後的終極 Prompt (v4.25 特化)
+            // 重排 1-9 順序：將名詞庫置頂，字體校驗置底，中間為禁止性規則
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
-Additional requirements:
-1. STRICT SCRIPT RULE: The final output MUST BE ENTIRELY and EXCLUSIVELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY non-target characters, including but not limited to English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul). Any English words in the output is a total failure.
-2. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
-3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context. Do not hallucinate meanings.
-4. KATAKANA RULE: You MUST translate Katakana terms (e.g., ラーメン, ビルビルダー) into their proper ${db.targetLangName} equivalents (e.g., 拉麵, 健美先生). Do NOT just copy them or use other languages.
-5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation, even for repeated words or sound effects.
-6. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.
-7. STYLE: Ensure the dialogue sounds natural and fluent in ${db.targetLangName}. Avoid machine-like translations.${glossaryRules}
-9. CHARACTER CONSISTENCY: After translating, perform a final check to ensure all Japanese Kanji and Simplified Chinese characters are interchanged to their correct ${db.targetLangName} equivalents.
-
+Additional requirements:${glossaryRules}2. STRICT TARGET LANGUAGE ONLY: The final output MUST BE ENTIRELY and EXCLUSIVELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY non-target characters, including but not limited to English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul).
+3. TONE & SLANG INTENSITY: Match the original's emotion and intensity. Do not harmonize, soften, or censor rude language or slang (e.g., "うっさい" ➔ "收聲").
+4. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation, even for repeated words or sound effects.
+5. KATAKANA RULE: You MUST translate Katakana terms (e.g., ラーメン) into their proper ${db.targetLangName} equivalents (e.g., 拉麵). Do NOT just copy them or use other languages.
+6. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
+7. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.
+8. STYLE: Ensure the dialogue sounds natural and fluent in ${db.targetLangName}. Avoid machine-like translations.
+9. CHARACTER CONSISTENCY CHECK: After translation, perform a final check to ensure all Japanese Kanji and Simplified Chinese characters are interchanged to their correct ${db.targetLangName} equivalents.
 Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:
 
 
 ${text}`;
 
-            if (i === 0) console.log("%c[Debug] First Full Request Prompt:", "color: #FFA500; font-weight: bold;", prompt);
+            if (i === 0) console.log("%c[Debug] v4.27 Optimized Prompt Order:", "color: #FFA500; font-weight: bold;", prompt);
 
             const startTime = Date.now();
             await new Promise((resolve) => {
@@ -239,7 +226,7 @@ ${text}`;
                     onload: function(res) {
                         if (currentAbortController?.signal.aborted) return resolve();
                         try {
-                            const translated = JSON.parse(res.responseText).response.trim();
+                            const translated = JSON.parse(res.responseText).response.trim().replace(/^"|"$/g, '');
                             const duration = Date.now() - startTime;
                             successfulAiCount++;
                             totalAiTimeMs += duration;
@@ -263,7 +250,6 @@ ${text}`;
     const observer = new MutationObserver(() => {
         injectControlMenu(); 
         if (!db.isEnabled || !window.location.pathname.includes('/watch/')) return;
-
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
             const currentMatchKey = getMatchKey(container.innerText);
@@ -271,8 +257,7 @@ ${text}`;
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
                 if (!outerSpan) return;
-                outerSpan.style.textAlign = "center";
-                outerSpan.style.display = "inline-block";
+                outerSpan.style.textAlign = "center"; outerSpan.style.display = "inline-block";
                 const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
                 if (!innerSpan) return;
                 const style = window.getComputedStyle(innerSpan);
