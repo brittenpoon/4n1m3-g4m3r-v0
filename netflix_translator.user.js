@@ -230,7 +230,7 @@ Produce only the ${db.targetLangName} translation, without any additional explan
 Additional requirements:
 1. STRICT TARGET LANGUAGE ONLY: The output MUST BE ENTIRELY in ${db.targetLangName}. You are strictly FORBIDDEN from outputting ANY English, Japanese Kana (Hiragana/Katakana), Romaji, or Korean Hangul. NO ENGLISH ALLOWED.
 2. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
-3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context (e.g., "うっさい" means "吵死了" or "閉嘴"). Do not hallucinate meanings.
+3. SLANG & COLLOQUIALISMS: Translate slang accurately based on context. Do not hallucinate meanings.
 4. KATAKANA RULE: Translate Katakana terms (e.g., ラーメン) into proper ${db.targetLangName} words (e.g., 拉麵). Do NOT copy them.
 5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation.
 6. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.${glossaryRules}
@@ -321,4 +321,118 @@ ${text}`;
                     <button id="ai-edit-glossary-btn" style="background:#0078D7; color:white; border:none; padding:6px; cursor:pointer; font-weight:bold; border-radius:4px; flex:1;">📝 編輯名詞庫</button>
                 </div>
 
-                <div style="border-top:1px solid #444; margin:10px 0 5px 0; padding
+                <div style="border-top:1px solid #444; margin:10px 0 5px 0; padding-top:10px; color:#bbb;">語言設定:</div>
+                <label>來源: <select id="ai-source-lang-select">${langOptions}</select></label>
+                <label style="margin-top:5px; display:block;">目標: <select id="ai-target-lang-select">${langOptions}</select></label>
+
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:15px; border-radius:4px; width:100%;">儲存並重新載入</button>
+                <button id="ai-clear-cache-btn" style="background:#444; color:#ccc; border:1px solid #555; padding:8px; cursor:pointer; font-weight:bold; margin-top:8px; border-radius:4px; width:100%;">清除翻譯快取</button>
+            </div>
+        `;
+        
+        btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
+        const spacer = document.createElement('div'); 
+        spacer.style = "min-width: 3rem; width: 3rem;";
+        btnWrapper.parentNode.insertBefore(spacer, btnWrapper);
+
+        const popup = document.getElementById('ai-menu-popup');
+        popup.addEventListener('click', (e) => e.stopPropagation());
+        
+        document.getElementById('ai-toggle-btn').onclick = (e) => {
+            e.stopPropagation();
+            popup.style.display = popup.style.display === 'none' ? 'flex' : 'none';
+        };
+
+        document.getElementById('ai-source-lang-select').value = db.sourceLangCode;
+        document.getElementById('ai-target-lang-select').value = db.targetLangCode;
+
+        document.getElementById('ai-edit-glossary-btn').onclick = () => {
+            let url = document.getElementById('ai-glossary-input').value.trim();
+            if (url.includes('raw.githubusercontent.com')) {
+                url = url.replace('raw.githubusercontent.com', 'github.com').replace('/main/', '/blob/main/').replace('/master/', '/blob/master/');
+            } else if (url.includes('github.com') && url.includes('/raw/')) {
+                url = url.replace('/raw/refs/heads/', '/blob/').replace('/raw/', '/blob/');
+            }
+            if (url) window.open(url, '_blank');
+        };
+
+        document.getElementById('ai-save-btn').onclick = () => {
+            db.isEnabled = document.getElementById('ai-cb-enable').checked;
+            db.aiModel = document.getElementById('ai-model-input').value.trim() || 'translategemma:4b';
+            db.glossaryUrl = document.getElementById('ai-glossary-input').value.trim();
+            
+            const sourceSelect = document.getElementById('ai-source-lang-select');
+            db.sourceLangCode = sourceSelect.value;
+            db.sourceLangName = sourceSelect.options[sourceSelect.selectedIndex].getAttribute('data-name');
+            
+            const targetSelect = document.getElementById('ai-target-lang-select');
+            db.targetLangCode = targetSelect.value;
+            db.targetLangName = targetSelect.options[targetSelect.selectedIndex].getAttribute('data-name');
+            
+            location.reload();
+        };
+
+        document.getElementById('ai-clear-cache-btn').onclick = () => {
+            if (confirm('確定要清除所有 24 小時內嘅翻譯記錄？\n清除後所有字幕需要重新呼叫 AI 翻譯。')) {
+                GM_setValue('ai_subtitle_cache', {});
+                alert('快取已清除！');
+                location.reload();
+            }
+        };
+
+        document.addEventListener('click', (e) => { 
+            if (popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none'; 
+        });
+    }
+
+    const observer = new MutationObserver(() => {
+        injectControlMenu(); 
+        if (!db.isEnabled) return;
+
+        document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
+            if (container.dataset.aiTranslated === "true") return;
+
+            const currentMatchKey = getMatchKey(container.innerText);
+            const translatedText = window.subtitleMap.get(currentMatchKey);
+
+            if (translatedText) {
+                const outerSpan = container.querySelector('span');
+                if (!outerSpan) return;
+                outerSpan.style.textAlign = "center";
+                outerSpan.style.display = "inline-block";
+
+                const innerSpan = outerSpan.querySelector('span:not(.ai-translated-span)');
+                if (!innerSpan) return;
+
+                const style = window.getComputedStyle(innerSpan);
+                const isVertical = style.writingMode && style.writingMode.includes('vertical');
+
+                if (!isVertical) {
+                    container.style.left = "50%";
+                    container.style.transform = "translateX(-50%)";
+                    container.style.whiteSpace = "nowrap";
+                }
+
+                const baseFontSize = parseFloat(style.fontSize);
+                const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => s.getAttribute('lang') !== 'zh' && !s.classList.contains('ai-translated-span'));
+                originalSpans.forEach(s => s.style.fontSize = (baseFontSize * 0.8) + "px");
+
+                const br = document.createElement('br');
+                br.className = 'ai-translated-br';
+                outerSpan.appendChild(br);
+
+                const aiSpan = innerSpan.cloneNode(true);
+                aiSpan.classList.add('ai-translated-span');
+                aiSpan.setAttribute('lang', 'zh');
+                aiSpan.style.fontSize = baseFontSize + "px";
+                aiSpan.innerText = translatedText;
+
+                outerSpan.appendChild(aiSpan);
+                container.dataset.aiTranslated = "true";
+            }
+        });
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+})();
