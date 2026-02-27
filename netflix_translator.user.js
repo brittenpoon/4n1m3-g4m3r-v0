@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (語言強制封鎖版 v4.23)
-// @version      4.23.0
-// @description  Rule 1 強化封鎖英俄文幻覺，恢復大尺寸 UI 按鈕。
+// @name         Netflix AI 字幕 (Debug 強化版 v4.24)
+// @version      4.24.0
+// @description  Rule 1 語言封鎖，大尺寸 UI 按鈕，並會喺 Console 輸出每段任務嘅第一個完整 Prompt。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.23.0";
+    const SCRIPT_VERSION = "4.24.0";
     let currentAbortController = null;
 
     const db = {
@@ -124,8 +124,6 @@
         .ai-translated-span { display: inline-block !important; color: #FFD700 !important; font-weight: bold; text-shadow: 2px 2px 4px #000 !important; }
         #ai-menu-popup { display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.95); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; font-size:14px; box-shadow: 0 8px 24px rgba(0,0,0,0.8); max-height: 80vh; overflow-y: auto; }
         #ai-menu-popup select, #ai-menu-popup input[type="text"] { background:#333; color:white; padding:6px; border:1px solid #666; border-radius:4px; outline:none; width:100%; margin-top:4px; box-sizing: border-box; }
-        
-        /* 還原上一版本較大的按鈕樣式 */
         #ai-toggle-btn { font-size: 18px !important; padding: 8px 16px !important; line-height: 1 !important; height: auto !important; min-width: 50px !important; }
     `);
 
@@ -213,7 +211,6 @@
                 continue; 
             }
 
-            // 修改後的 Rule 1：強制排除所有非目標語言字元
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
 Additional requirements:
@@ -228,6 +225,11 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
 
 ${text}`;
+
+            // --- [NEW] Always log the very first prompt sent in this batch ---
+            if (i === 0) {
+                console.log("%c[Debug] First Full Request Prompt Sent to Ollama:", "color: #FFA500; font-weight: bold;", prompt);
+            }
 
             const startTime = Date.now();
             await new Promise((resolve) => {
