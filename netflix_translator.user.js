@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (規則重排版 v4.27)
-// @version      4.27.0
-// @description  重排 9 項規則順序以優化 Gemma 4B 理解，強化俚語與名詞庫優先權，恢復大按鈕樣式。
+// @name         Netflix AI 字幕 (Gemma 4B 特化優化版 v4.28)
+// @version      4.28.0
+// @description  移除干擾性 e.g.，無損合併 9 條規則至 7 條，轉換 Glossary 格式防止 Token Bleed。
 // @author       Gemini
 // @match        https://www.netflix.com/*
 // @grant        GM_xmlhttpRequest
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.27.0";
+    const SCRIPT_VERSION = "4.28.0";
     let currentAbortController = null;
 
     const db = {
@@ -170,8 +170,10 @@
 
         const total = originalLines.length;
         const glossaryDict = await fetchGlossary();
-        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `[${k}:${v}]`);
-        let glossaryRules = glossaryPairs.length > 0 ? `\n1. STRICT GLOSSARY (ja:${db.targetLangCode} MANDATORY DICTIONARY): ${glossaryPairs.join(', ')}. You MUST use these exact translations. This takes absolute precedence over all other rules.\n` : "";
+        
+        // 變更格式為 Key=Value，用 | 分隔，幫助 4B 模型更準確對齊 Token，避免 Attention Bleed
+        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
 
         const videoHash = getVideoHash();
         let allCache = cleanAndGetCache();
@@ -199,23 +201,23 @@
                 continue; 
             }
 
-            // 重排 1-9 順序：將名詞庫置頂，字體校驗置底，中間為禁止性規則
+            // --- 無損合併並重排的 7 條鐵律 (移除了干擾性 e.g.) ---
             const prompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator. Your goal is to accurately convey the meaning and nuances of the original ${db.sourceLangName} text while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations or commentary.
-Additional requirements:${glossaryRules}2. STRICT TARGET LANGUAGE ONLY: The final output MUST BE ENTIRELY and EXCLUSIVELY in ${db.targetLangName} characters. You are strictly forbidden from leaving ANY non-target characters, including but not limited to English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul).
-3. TONE & SLANG INTENSITY: Match the original's emotion and intensity. Do not harmonize, soften, or censor rude language or slang (e.g., "うっさい" ➔ "收聲").
-4. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation, even for repeated words or sound effects.
-5. KATAKANA RULE: You MUST translate Katakana terms (e.g., ラーメン) into their proper ${db.targetLangName} equivalents (e.g., 拉麵). Do NOT just copy them or use other languages.
-6. SYMBOLS & PUNCTUATION: If the text ends with a long dash (e.g., ⸺) or other special punctuation, do NOT let it confuse you. Retain the dash in the translation or translate the trailing off naturally.
-7. TRANSLATE NAMES: Translate ALL character names into ${db.targetLangName} characters.
-8. STYLE: Ensure the dialogue sounds natural and fluent in ${db.targetLangName}. Avoid machine-like translations.
-9. CHARACTER CONSISTENCY CHECK: After translation, perform a final check to ensure all Japanese Kanji and Simplified Chinese characters are interchanged to their correct ${db.targetLangName} equivalents.
+Additional requirements:
+1. STRICT GLOSSARY: ${glossaryString}. You MUST use these exact translations. This takes absolute precedence.
+2. SCRIPT PURITY (CRITICAL): The output MUST be ENTIRELY in ${db.targetLangName} characters. You are strictly forbidden from outputting ANY English (Latin), Russian (Cyrillic), Japanese (Kana/Romaji), or Korean (Hangul). Any non-target character is a total failure.
+3. TRANSLATE ALL NAMES & KATAKANA: All character names and Katakana terms MUST be translated into proper ${db.targetLangName} equivalents. DO NOT copy them.
+4. TONE & SLANG: Match the original emotion and intensity. Do not harmonize, soften, or censor rude language or slang.
+5. NO REFUSALS: NEVER apologize, refuse to translate, or output conversational text. ALWAYS force a translation.
+6. SYMBOLS & PUNCTUATION: Retain special punctuation like long dashes naturally in the translation.
+7. STYLE & CHARACTER CHECK: Ensure fluent dialogue. Perform a final check to convert all Japanese Kanji and Simplified Chinese into correct ${db.targetLangName} characters.
 Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:
 
 
 ${text}`;
 
-            if (i === 0) console.log("%c[Debug] v4.27 Optimized Prompt Order:", "color: #FFA500; font-weight: bold;", prompt);
+            if (i === 0) console.log("%c[Debug] v4.28 Optimized Prompt:", "color: #FFA500; font-weight: bold;", prompt);
 
             const startTime = Date.now();
             await new Promise((resolve) => {
