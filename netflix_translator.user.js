@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (零警告與邏輯還原版 v4.38.5)
-// @version      4.38.5
+// @name         Netflix AI 字幕 (零警告與邏輯還原版 v4.38.6)
+// @version      4.38.6
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.5";
+    const SCRIPT_VERSION = "4.38.6";
     const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -137,7 +137,7 @@ STRICT OPERATIONAL RULES:
             model: HYBRID_MODEL_NAME,
             from: db.baseModel.trim() || 'translategemma:4b',
             system: systemPrompt,
-            parameters: { temperature: 0.1, num_predict: 256 },
+            parameters: { temperature: 0.1, num_predict: 256, num_gpu: 999},
             stream: false
         };
 
