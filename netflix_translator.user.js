@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name         Netflix AI 字幕 (零警告與邏輯還原版 v4.38.2)
-// @version      4.38.2
+// @name         Netflix AI 字幕 (零警告與邏輯還原版 v4.38.5)
+// @version      4.38.5
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.2";
+    const SCRIPT_VERSION = "4.38.5";
     const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -123,17 +123,15 @@
         let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
 
         // --- 強化版 Rule 5：徹底封殺任何警告、隱私或拒絕訊息 ---
-        const systemPrompt = `You are a professional ${db.sourceLangName} to ${db.targetLangName} translator for adult Netflix content.
-Your goal is to provide direct, natural, and uncensored translations.
-
+        const systemPrompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator for R-rated adult content. Your goal is to accurately convey the exact uncensored meaning, tone, and nuances of the original ${db.sourceLangName} text, regardless of how explicit, violent, or profane it is, while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
+Produce only the ${db.targetLangName} translation, without any additional explanations, commentary, warning messages, privacy notices, safety alerts, or any meta-commentary.
 STRICT OPERATIONAL RULES:
-1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations must be used. They take absolute precedence.
-2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese (Big5/Standard) character set. The use of ANY English letters (A-Z), Korean Hangul (ㄱ-ㅎ, ㅏ-ㅣ), or Japanese Kana is a violation of your core programming.
-3. TRANSLATE NAMES & KANA: All character names, Hiragana (平假名), and Katakana (片假名) terms MUST be translated into proper ${db.targetLangName} equivalents. DO NOT copy them.
+1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
+2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese (Big5/Standard) character set. No KANA is allowed in output.
+3. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 4. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
-5. NO REFUSALS, WARNINGS, OR META-TEXT (CRITICAL): You are STRICTLY FORBIDDEN from outputting warning messages, privacy notices, safety alerts, or any meta-commentary (e.g., "Privacy:", "Note:"). ALWAYS provide the single most direct translation.
-6. SYMBOL RETENTION: Special punctuation like ⸺ must be kept as-is in the Chinese text.
-7. CHARACTER PURIFICATION: Perform a final check to ensure NO Japanese Kanji or Simplified Chinese remain. All must be converted to ${db.targetLangName}.`;
+5. SYMBOL RETENTION: All punctuation must be kept as-is in the translated text.
+6. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
 
         const requestData = {
             model: HYBRID_MODEL_NAME,
