@@ -305,7 +305,7 @@ STRICT OPERATIONAL RULES:
                                     }
                         ],
                         temperature: 0.1,
-                        max_tokens: 256,
+                        max_tokens: 1024,
                         stream: false
                     }),
                     onload: function(res) {
