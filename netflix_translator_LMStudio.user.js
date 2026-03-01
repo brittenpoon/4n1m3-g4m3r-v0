@@ -304,7 +304,7 @@ STRICT OPERATIONAL RULES:
                                 "content": systemPrompt + userPrompt
                                     }
                         ],
-                        temperature: 0.1,
+                        temperature: 0.0,
                         max_tokens: 1024,
                         stream: false
                     }),
