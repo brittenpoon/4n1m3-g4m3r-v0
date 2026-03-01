@@ -270,7 +270,7 @@ STRICT OPERATIONAL RULES:
 2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese (Big5/Standard) character set. No KANA is allowed in output.
 3. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 4. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
-5. SYMBOL RETENTION: All punctuation must be kept as-is in the translated text.
+5. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ) must be kept as-is in the translated text.
 6. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
 
 
