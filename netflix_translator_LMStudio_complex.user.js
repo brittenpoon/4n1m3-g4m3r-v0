@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI LMStudio_complex
-// @version      5.0.1
+// @version      5.0.2
 // @description  鏡像抄寫法 + 動態行數核對，強制 AI 檢查總行數與最後 ID，防漏行跳號。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '5.0.0';
+    const SCRIPT_VERSION = '5.0.2';
     const CACHE_TTL = 24 * 60 * 60 * 1000;
 
     const db = {
@@ -106,7 +106,7 @@
 
     function exportTranslationJSON(stats, mapping, fromCache = false) {
         const outputData = { timestamp: new Date().toISOString(), modelUsed: stats.model, processingTimeMs: Math.round(stats.duration), totalLines: stats.lines, fromCache: fromCache, translations: mapping };
-        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON (v2.0.4.9)" : "%c📺 Netflix AI Subtitles - JSON Export Data (v2.0.4.9)";
+        const title = fromCache ? "%c📺 Netflix AI Subtitles - Cached JSON" : "%c📺 Netflix AI Subtitles - JSON Export Data";
         console.groupCollapsed(title, "color: #00FFFF; font-weight: bold; font-size: 12px;");
         console.log(JSON.stringify(outputData, null, 2));
         console.groupEnd();
@@ -170,7 +170,7 @@
         if (cachedMapping) {
             window.subtitleMap.clear();
             cachedMapping.forEach(item => { if (item.orig) window.subtitleMap.set(getMatchKey(item.orig), item.trans); });
-            console.log("%c=== Netflix AI 命中緩存 (v2.0.4.9) ===", "color: #00FFFF; font-weight: bold;");
+            console.log("%c=== Netflix AI 命中緩存 ===", "color: #00FFFF; font-weight: bold;");
             exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: 0 }, cachedMapping, true);
             return;
         }
@@ -244,7 +244,7 @@ STRICT OPERATIONAL RULES:
                         console.warn(`%c[警告] AI 疑似跳號！預期 ${totalLines} 行，實際回傳 ${processedCount} 行。`, "color: #FFA500; font-weight: bold;");
                     }
 
-                    console.log("%c=== Netflix AI API 翻譯完成 (Count Verified) (v2.0.4.9) ===", "color: #00FF00; font-weight: bold;");
+                    console.log("%c=== Netflix AI API 翻譯完成 (Count Verified) ===", "color: #00FF00; font-weight: bold;");
                     exportTranslationJSON({ model: db.activeModel, lines: originalLines.length, duration: duration }, exportMapping, false);
                     updateStats(duration, originalLines.length);
 
@@ -321,7 +321,7 @@ STRICT OPERATIONAL RULES:
         wrapper.id = 'ai-subtitle-wrapper';
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
-            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI 2.0.4.9</button></div>
+            <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
@@ -331,7 +331,7 @@ STRICT OPERATIONAL RULES:
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
                 <button id="ai-clear-cache-btn" style="background:#888; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">🗑️ 清除快取 (Clear Cache)</button>
-                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用 v2.0.4.9</button>
+                <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用</button>
             </div>
         `;
         btnWrapper.parentNode.insertBefore(wrapper, btnWrapper);
