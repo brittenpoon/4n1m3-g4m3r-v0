@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.7-LM
+// @version      4.38.8-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.7";
+    const SCRIPT_VERSION = "4.38.8";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -270,7 +270,7 @@ STRICT OPERATIONAL RULES:
 2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese (Big5/Standard) character set. No KANA is allowed in output.
 3. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 4. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
-5. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
+5. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
 6. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
 
 
@@ -288,8 +288,19 @@ STRICT OPERATIONAL RULES:
                 continue;
             }
 
+            // --- 提取前後文邏輯 ---
+            const contextRange = 5;
+            const start = Math.max(0, i - contextRange);
+            const end = Math.min(total, i + contextRange + 1);
+            // 攞前後 5 句，並標記邊句係當前需要翻譯嘅
+            const contextLines = originalLines.slice(start, end).map((line, idx) => {
+                const relativeIdx = start + idx;
+                return relativeIdx === i ? ` | ${line}` : ` | ${line}`;  //`>>> TARGET: ${line} <<<`
+            }).join('\n');
+
             // 嚴格遵守兩行空行
-            const userPrompt = `Please translate the following ${db.sourceLangName} text into ${db.targetLangName}:\n\n\n${text}`;
+            const userPrompt = `7. Context Reference:${contextLines}. These lines are for reference only (not for translation) to help understand the context; they may not be directly relevant.
+Please translate the following ${db.sourceLangName} text into ${db.targetLangName} in one line:\n\n\n${text}`;
 
             const startTime = Date.now();
             await new Promise((resolve) => {
