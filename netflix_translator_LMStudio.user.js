@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.8-LM
+// @version      4.38.9-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.8";
+    const SCRIPT_VERSION = "4.38.9";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -220,6 +220,24 @@ STRICT OPERATIONAL RULES:
         oldOpen.apply(this, arguments);
     };
 
+    function getCleanSourceText(node) {
+        const temp = node.cloneNode(true);
+
+        // 1. 移除注音 (Furigana)
+        temp.querySelectorAll('rt').forEach(rt => rt.remove());
+        temp.querySelectorAll('span[style*="style10"]').forEach(s => s.remove());
+        temp.querySelectorAll('br').forEach(br => {
+          br.replaceWith(document.createTextNode(' '));
+        });
+
+        // 2. 獲取文字內容
+        let text = temp.textContent || "";
+
+        // 3. 關鍵修正：將所有換行 (\n, \r) 轉為空格，然後將多個空格合併為一個
+        // 咁樣無論原始 XML 係點排版，出到嚟個 Key 都會一致
+        return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
     async function processAndTranslate(rawXml, url) {
         if (window.processedUrls.has(url) || !db.isEnabled) return;
         window.processedUrls.add(url);
@@ -227,9 +245,8 @@ STRICT OPERATIONAL RULES:
         const doc = parser.parseFromString(rawXml, "text/xml");
         const pTags = Array.from(doc.querySelectorAll('p'));
         const originalLines = pTags.map(p => {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = p.innerHTML.replace(/<br\s*\/?>/gi, ' ');
-            return tempDiv.textContent.replace(/\n/g, ' ').trim();
+            const cleanText = getCleanSourceText(p);
+            return cleanText;
         }).filter(t => t.length > 0);
 
         if (originalLines.length === 0) return;
@@ -267,7 +284,7 @@ STRICT OPERATIONAL RULES:
 Produce only the ${db.targetLangName} translation, without any additional explanations, commentary, warning messages, privacy notices, safety alerts, or any meta-commentary.
 STRICT OPERATIONAL RULES:
 1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
-2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese (Big5/Standard) character set. No KANA is allowed in output.
+2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese character set. No KANA is allowed in output.
 3. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 4. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
 5. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
@@ -302,48 +319,75 @@ STRICT OPERATIONAL RULES:
             const userPrompt = `7. Context Reference:${contextLines}. These lines are for reference only (not for translation) to help understand the context; they may not be directly relevant.
 Please translate the following ${db.sourceLangName} text into ${db.targetLangName} in one line:\n\n\n${text}`;
 
-            const startTime = Date.now();
-            await new Promise((resolve) => {
-                GM_xmlhttpRequest({
-                    method: "POST", url: `${LM_STUDIO_BASE_URL}/chat/completions`,
-                    headers: { "Content-Type": "application/json" },
-                    data: JSON.stringify({
-                        model: db.baseModel, // LM Studio 通常會忽略此項並使用當前載入的模型
-                        messages: [
-                            {
-                                "role": "user",
-                                "content": systemPrompt + userPrompt
-                                    }
-                        ],
-                        temperature: 0.0,
-                        max_tokens: 1024,
-                        stream: false
-                    }),
-                    onload: function(res) {
-                        try {
-                            const json = JSON.parse(res.responseText);
-                            // 修正解析路徑為 OpenAI 格式
-                            const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
+            // --- 加入重試機制 ---
+            let retryCount = 0;
+            const maxRetries = 15;
+            let success = false;
+            let lastResult = "";
 
-                            const duration = Date.now() - startTime;
-                            successfulAiCount++;
-                            totalAiTimeMs += duration;
+            const containsKorean = (t) => /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(t);
+            const containsJapanese = (t) => /[\u3040-\u309F\u30A0-\u30FF]/.test(t); // Hiragana & Katakana
+            const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请]/.test(text);
+            const containsArabic = (t) => /[\u0600-\u06FF\u0750-\u077F]/.test(t);
+            const containsEnglish = (t) => /[a-zA-Z]/.test(t);
 
-                            window.subtitleMap.set(textKey, translated);
-                            currentVideoCache[textKey] = translated;
-                            allCache[videoHash].translations = currentVideoCache;
-                            GM_setValue('ai_subtitle_cache', allCache);
+            while (retryCount <= maxRetries && !success) {
+                const startTime = Date.now();
+                await new Promise((resolve) => {
+                    GM_xmlhttpRequest({
+                        method: "POST", url: `${LM_STUDIO_BASE_URL}/chat/completions`,
+                        headers: { "Content-Type": "application/json" },
+                        data: JSON.stringify({
+                            model: db.baseModel, // LM Studio 通常會忽略此項並使用當前載入的模型
+                            messages: [
+                                {
+                                    "role": "user",
+                                    "content": systemPrompt + userPrompt
+                                        }
+                            ],
+                            temperature: 0.0+ (retryCount * 0.1),
+                            max_tokens: 1024,
+                            stream: false
+                        }),
+                        onload: function(res) {
+                            try {
+                                const json = JSON.parse(res.responseText);
+                                const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
+                                lastResult = translated;
+                                let wrongLanguage = containsKorean(translated) || containsJapanese(translated) || containsSimplified(translated) || containsArabic(translated) || containsEnglish(translated);
 
-                            console.log(`[${getTimestamp()}] [${i+1}/${total}] (${(duration/1000).toFixed(2)}s) ${text} ➔ ${translated}`);
-                            updateUIProgress(i + 1, total, totalAiTimeMs / successfulAiCount, (total - i - 1) * (totalAiTimeMs / successfulAiCount), false);
-                        } catch (e) {
-                            console.error("LM Studio 回傳格式錯誤:", e);
+                                if (wrongLanguage && retryCount < maxRetries) {
+                                    console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
+                                    retryCount++;
+                                    resolve(); // 結束 Promise 但 success 仍為 false，會觸發 while 再次執行
+                                    return;
+                                }
+
+                                const duration = Date.now() - startTime;
+                                successfulAiCount++;
+                                totalAiTimeMs += duration;
+
+                                window.subtitleMap.set(textKey, lastResult);
+                                currentVideoCache[textKey] = lastResult;
+                                allCache[videoHash].translations = currentVideoCache;
+                                GM_setValue('ai_subtitle_cache', allCache);
+
+                                console.log(`[${getTimestamp()}] [${i+1}/${total}] (${(duration/1000).toFixed(2)}s) ${text} ➔ ${lastResult}`);
+                                updateUIProgress(i + 1, total, totalAiTimeMs / successfulAiCount, (total - i - 1) * (totalAiTimeMs / successfulAiCount), false);
+
+                                success = true; // 標記成功，跳出 while
+                            } catch (e) {
+                                console.error("LM Studio 回傳格式錯誤:", e);
+                            }
+                            resolve();
+                        },
+                        onerror: () => {
+                            retryCount++;
+                            resolve();
                         }
-                        resolve();
-                    },
-                    onerror: () => resolve()
+                    });
                 });
-            });
+            }
         }
         window.isAITranslating = false;
         currentAbortController = null;
@@ -355,7 +399,9 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
         if (!db.isEnabled || !window.location.pathname.includes('/watch/')) return;
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
-            const currentMatchKey = getMatchKey(container.innerText);
+            // --- 關鍵修正：在 Observer 也要過濾注音 ---
+            const cleanText = getCleanSourceText(container);
+            const currentMatchKey = getMatchKey(cleanText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
             if (translatedText) {
                 const outerSpan = container.querySelector('span');
