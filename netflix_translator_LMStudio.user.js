@@ -327,7 +327,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
             const containsKorean = (t) => /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(t);
             const containsJapanese = (t) => /[\u3040-\u309F\u30A0-\u30FF]/.test(t); // Hiragana & Katakana
-            const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请]/.test(text);
+            const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰]/.test(text);
             const containsArabic = (t) => /[\u0600-\u06FF\u0750-\u077F]/.test(t);
             const containsEnglish = (t) => /[a-zA-Z]/.test(t);
 
