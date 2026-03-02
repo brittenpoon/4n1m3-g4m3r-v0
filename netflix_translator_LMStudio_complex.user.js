@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI LMStudio_complex
-// @version      5.0.2
+// @version      5.0.3
 // @description  鏡像抄寫法 + 動態行數核對，強制 AI 檢查總行數與最後 ID，防漏行跳號。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '5.0.2';
+    const SCRIPT_VERSION = '5.0.3';
     const CACHE_TTL = 24 * 60 * 60 * 1000;
 
     const db = {
@@ -65,7 +65,7 @@
         GM_setValue('ai_translation_cache', cache);
     }
 
-    function fetchGlossary() {
+    async function fetchGlossary() {
         return new Promise((resolve) => {
             GM_xmlhttpRequest({
                 method: "GET",
