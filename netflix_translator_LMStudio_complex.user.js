@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI LMStudio_complex
-// @version      5.0.0
+// @version      5.0.1
 // @description  鏡像抄寫法 + 動態行數核對，強制 AI 檢查總行數與最後 ID，防漏行跳號。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -29,11 +29,8 @@
         get customModel() { return GM_getValue('ai_custom_model', ''); },
         set customModel(v) { GM_setValue('ai_custom_model', v); },
         get activeModel() {
-            if (this.modelType === 'paid1') return 'google/gemini-2.5-flash-lite-preview-09-2025';
-            if (this.modelType === 'custom') return this.customModel || 'arcee-ai/trinity-large-preview:free';
-            if (this.modelType === 'free1') return 'arcee-ai/trinity-large-preview:free';
-            if (this.modelType === 'free2') return 'arcee-ai/trinity-mini:free';
-            return 'arcee-ai/trinity-large-preview:free';
+            if (this.modelType === 'gemma4b') return 'translategemma-4b-it';
+            return 'translategemma-4b-it';
         },
         get stats() { return GM_getValue('ai_perf_stats', {}); },
         set stats(v) { GM_setValue('ai_perf_stats', v); }
@@ -322,9 +319,7 @@ STRICT OPERATIONAL RULES:
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free1" ${db.modelType === 'free1' ? 'checked' : ''}> Free (trinity-large-preview)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free2" ${db.modelType === 'free2' ? 'checked' : ''}> Free (trinity-mini)</label>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="paid1" ${db.modelType === 'paid1' ? 'checked' : ''}> Paid (gemini-2.5-flash-lite-preview)</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free1" ${db.modelType === 'gemma4b' ? 'checked' : ''}> translategemma-4b-it</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
                 <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
