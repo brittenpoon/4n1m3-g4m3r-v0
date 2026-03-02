@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI LMStudio_complex
-// @version      5.0.3
+// @version      5.0.2
 // @description  鏡像抄寫法 + 動態行數核對，強制 AI 檢查總行數與最後 ID，防漏行跳號。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -16,15 +16,21 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '5.0.3';
+    const SCRIPT_VERSION = '5.0.2';
     const CACHE_TTL = 24 * 60 * 60 * 1000;
 
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
-        get apiKey() { return GM_getValue('ai_sub_apikey', ''); },
-        set apiKey(v) { GM_setValue('ai_sub_apikey', v); },
-        get modelType() { return GM_getValue('ai_model_type', 'free1'); },
+        get sourceLangName() { return GM_getValue('ai_source_lang_name', 'Japanese'); },
+        set sourceLangName(v) { GM_setValue('ai_source_lang_name', v); },
+        get sourceLangCode() { return GM_getValue('ai_source_lang_code', 'ja'); },
+        set sourceLangCode(v) { GM_setValue('ai_source_lang_code', v); },
+        get targetLangName() { return GM_getValue('ai_target_lang_name', 'Chinese (Traditional)'); },
+        set targetLangName(v) { GM_setValue('ai_target_lang_name', v); },
+        get targetLangCode() { return GM_getValue('ai_target_lang_code', 'zh-Hant'); },
+        set targetLangCode(v) { GM_setValue('ai_target_lang_code', v); },
+        get modelType() { return GM_getValue('ai_model_type', 'gemma4b'); },
         set modelType(v) { GM_setValue('ai_model_type', v); },
         get customModel() { return GM_getValue('ai_custom_model', ''); },
         set customModel(v) { GM_setValue('ai_custom_model', v); },
@@ -35,6 +41,17 @@
         get stats() { return GM_getValue('ai_perf_stats', {}); },
         set stats(v) { GM_setValue('ai_perf_stats', v); }
     };
+
+    const SUPPORTED_LANGUAGES = [
+        { code: 'en', name: 'English' },
+        { code: 'ja', name: 'Japanese' },
+        { code: 'zh-Hant', name: 'Chinese (Traditional)' },
+        { code: 'zh-Hant-HK', name: 'Chinese (HK)' },
+        { code: 'zh-Hant-TW', name: 'Chinese (TW)' },
+        { code: 'zh-Hans', name: 'Chinese (Simplified)' },
+        { code: 'ko', name: 'Korean' }
+    ];
+
 
     window.subtitleMap = new Map();
     window.processedUrls = new Set();
@@ -84,10 +101,6 @@
             });
         });
     }
-
-    const glossaryDict = await fetchGlossary();
-    const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
-    let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
 
     GM_addStyle(`
         * { -webkit-user-select: text !important; -moz-user-select: text !important; -ms-user-select: text !important; user-select: text !important; }
@@ -141,7 +154,7 @@
     XMLHttpRequest.prototype.open = function(method, url) {
         if (url.includes(".nflxvideo.net/?o=")) {
             this.addEventListener('load', async function() {
-                if (!db.isEnabled || !db.apiKey) return;
+                if (!db.isEnabled) return;
                 if (window.location.pathname.startsWith('/browse')) return;
                 await processAndTranslate(this.responseText, url);
             });
@@ -175,16 +188,24 @@
             return;
         }
 
+        const glossaryDict = await fetchGlossary();
+        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
+
         const taggedInput = originalLines.map((line, idx) => `${idx}|${line}`).join('\n');
-        
+
         // 【核心修改】動態計算行數，並寫入 System Content
         const totalLines = originalLines.length;
         const lastId = totalLines - 1;
+        const cacheEnvKey = `${SCRIPT_VERSION}_${db.activeModel}_${db.sourceLangCode}_${db.targetLangCode}`;
 
         let systemContent = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator for R-rated adult content. Your goal is to accurately convey the exact uncensored meaning, tone, and nuances of the original ${db.sourceLangName} text, regardless of how explicit, violent, or profane it is, while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 STRICT OPERATIONAL RULES:
---- FORMAT & ALIGNMENT (CRITICAL ECHO PROMPTING) ---
-1. STRICT FORMATTING: The input format is "ID|Original Text", one sentence per line. The output format MUST strictly be "ID|Original Text|Translated Text", one sentence per line.
+--- FORMAT EXAMPLE (MUST FOLLOW) ---
+0|（真まこと）今日は学生たちの評価の場|（真）今天是學生們評分的場合
+1|礼法 言動 その他のマナー|禮法 言行 以及其他禮儀
+--- FORMAT & ALIGNMENT ---
+1. STRICT FORMATTING: The input format is "ID|${db.sourceLangName} (${db.sourceLangCode}) Text", one sentence per line. The output format MUST strictly be "ID|${db.sourceLangName} (${db.sourceLangCode}) Text|${db.targetLangName} (${db.targetLangCode}) Text", one sentence per line.
 2. MANDATORY ECHOING: You MUST copy the original text word-for-word exactly as it is, append a "|", and only then append the translation!
 3. LINE COUNT VERIFICATION: This input contains exactly ${totalLines} lines! The starting ID is 0, and the final ID MUST be ${lastId}! The number of lines you output MUST be exactly ${totalLines} lines!
 4. NO SKIPPING ALLOWED: You must strictly follow the ascending numerical order. Skipping IDs (e.g., "15, 16, 18") is strictly prohibited! Even if the original text is just a single punctuation mark or a verbal tic, you MUST output the corresponding "ID|Original Text|Translated Text".
@@ -195,8 +216,9 @@ STRICT OPERATIONAL RULES:
 8. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 9. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
 10. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
-11. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.\n\n\n`;
-        
+11. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.
+Please translate the following ${db.sourceLangName} text into ${db.targetLangName} according to STRICT FORMATTING:\n\n\n`;
+
         if (window.glossaryPrompt) systemContent += window.glossaryPrompt;
 
         const reqStartTime = performance.now();
@@ -205,10 +227,10 @@ STRICT OPERATIONAL RULES:
         GM_xmlhttpRequest({
             method: "POST",
             url: "http://127.0.0.1:1234/v1/chat/completions",
-            headers: { "Authorization": `Bearer ${db.apiKey}`, "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json" },
             data: JSON.stringify({
                 model: db.activeModel,
-                messages: [{ role: "system", content: systemContent }, { role: "user", content: taggedInput }]
+                messages: [{ role: "user", content: systemContent + taggedInput }]
             }),
             onload: function(res) {
                 try {
@@ -227,10 +249,10 @@ STRICT OPERATIONAL RULES:
                         if (parts.length >= 3) {
                             const idx = parseInt(parts[0].trim());
                             if (isNaN(idx)) return;
-                            
+
                             const trans = parts.slice(2).join('|').trim();
                             const orig = originalLines[idx];
-                            
+
                             if (orig && trans) {
                                 window.subtitleMap.set(getMatchKey(orig), trans);
                                 exportMapping.push({ id: idx, orig: orig, trans: trans });
@@ -252,8 +274,8 @@ STRICT OPERATIONAL RULES:
                 } catch (err) {
                     console.error("API 回傳解析失敗:", err);
                     alert("翻譯發生錯誤，請嘗試清除快取後重試。");
-                } finally { 
-                    toggleLoading(false); 
+                } finally {
+                    toggleLoading(false);
                 }
             },
             onerror: () => toggleLoading(false)
@@ -319,16 +341,18 @@ STRICT OPERATIONAL RULES:
         const btnWrapper = targetBtn.closest('div.medium') || targetBtn.parentElement;
         const wrapper = document.createElement('div');
         wrapper.id = 'ai-subtitle-wrapper';
+        const langOptions = SUPPORTED_LANGUAGES.map(lang => `<option value="${lang.code}" data-name="${lang.name}">${lang.name}</option>`).join('');
         wrapper.style.display = 'flex';
         wrapper.innerHTML = `
             <div class="${btnWrapper.className}"><button class="${targetBtn.className}" id="ai-toggle-btn" style="color:white; font-weight:bold; font-size:16px;">AI</button></div>
             <div id="ai-menu-popup" style="display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); background:rgba(10,10,10,0.98); border:1px solid #444; padding:20px; border-radius:10px; width:300px; flex-direction:column; gap:10px; z-index:2000002; color:white; box-shadow: 0 8px 24px rgba(0,0,0,0.9); font-size:14px;">
                 <label style="display:flex; align-items:center; gap:10px; cursor:pointer;"><input type="checkbox" id="ai-cb-enable" ${db.isEnabled ? 'checked' : ''}> 啟用 AI 字幕</label>
                 <div style="border-top:1px solid #444; margin:5px 0; padding-top:10px;">模型選擇:</div>
-                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="free1" ${db.modelType === 'gemma4b' ? 'checked' : ''}> translategemma-4b-it</label>
+                <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="gemma4b" ${db.modelType === 'gemma4b' ? 'checked' : ''}> translategemma-4b-it</label>
                 <label style="display:flex; gap:8px;"><input type="radio" name="ai-model" value="custom" ${db.modelType === 'custom' ? 'checked' : ''}> Custom:</label>
                 <input type="text" id="ai-custom-input" placeholder="Model ID" value="${db.customModel}" style="padding:5px; background:#333; color:white; border:1px solid #555; width:100%; font-size:12px; ${db.modelType === 'custom' ? '' : 'display:none;'}">
-                <input type="password" id="ai-api-input" placeholder="API Key" value="${db.apiKey}" style="padding:8px; background:#333; color:white; border:1px solid #555; width:100%; margin-top:5px;">
+                <label>來源: <select id="ai-source-lang-select">${langOptions}</select></label>
+                <label>目標: <select id="ai-target-lang-select">${langOptions}</select></label>
                 <button id="ai-glossary-btn" style="background:#444; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">📖 編輯名詞庫 (Glossary)</button>
                 <button id="ai-clear-cache-btn" style="background:#888; color:white; border:1px solid #666; padding:8px; cursor:pointer; font-size:13px; margin-top:5px; border-radius:4px;">🗑️ 清除快取 (Clear Cache)</button>
                 <button id="ai-save-btn" style="background:#E50914; color:white; border:none; padding:10px; cursor:pointer; font-weight:bold; margin-top:10px; border-radius:4px;">儲存並套用</button>
@@ -350,6 +374,9 @@ STRICT OPERATIONAL RULES:
             window.open('https://github.com/brittenpoon/4n1m3-g4m3r-v0/blob/main/Glossary.json', '_blank');
         };
 
+        document.getElementById('ai-source-lang-select').value = db.sourceLangCode;
+        document.getElementById('ai-target-lang-select').value = db.targetLangCode;
+
         document.getElementById('ai-clear-cache-btn').onclick = (e) => {
             e.stopPropagation();
             if (confirm('確定要清除所有已翻譯的字幕快取嗎？')) {
@@ -365,9 +392,10 @@ STRICT OPERATIONAL RULES:
         });
         document.getElementById('ai-save-btn').onclick = () => {
             db.isEnabled = document.getElementById('ai-cb-enable').checked;
-            db.apiKey = document.getElementById('ai-api-input').value.trim();
             db.modelType = document.querySelector('input[name="ai-model"]:checked').value;
             db.customModel = document.getElementById('ai-custom-input').value.trim();
+            db.sourceLangCode = document.getElementById('ai-source-lang-select').value;
+            db.targetLangCode = document.getElementById('ai-target-lang-select').value;
             location.reload();
         };
         document.addEventListener('click', (e) => { if (popup.style.display === 'flex' && !wrapper.contains(e.target)) popup.style.display = 'none'; });
