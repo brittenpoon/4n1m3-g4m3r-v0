@@ -66,22 +66,28 @@
     }
 
     function fetchGlossary() {
-        GM_xmlhttpRequest({
-            method: "GET",
-            url: "https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json",
-            onload: function(res) {
-                try {
-                    const arr = JSON.parse(res.responseText);
-                    if (Array.isArray(arr) && arr.length > 0) {
-                        let text = "\n\n【專有名詞對照表】\n遇到以下名詞，請務必使用對應譯名：\n";
-                        arr.forEach(item => { if (item.orig && item.trans) text += `- ${item.orig}: ${item.trans}\n`; });
-                        window.glossaryPrompt = text;
-                    }
-                } catch (e) {}
-            }
+        return new Promise((resolve) => {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: "https://github.com/brittenpoon/4n1m3-g4m3r-v0/raw/refs/heads/main/Glossary.json",
+                    onload: function(res) {
+                        if (res.status !== 200) return resolve({});
+                        try {
+                            let cleanText = res.responseText.replace(/[\uFEFF\u200B\u00A0\u3000]/g, '').trim();
+                            const data = JSON.parse(cleanText);
+                            const filteredData = {};
+                            for (const [key, val] of Object.entries(data)) { if (!key.startsWith('_')) filteredData[key] = val; }
+                            resolve(filteredData);
+                        } catch (e) { resolve({}); }
+                    },
+                    onerror: () => resolve({})
+            });
         });
     }
-    fetchGlossary();
+
+    const glossaryDict = await fetchGlossary();
+    const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+    let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
 
     GM_addStyle(`
         * { -webkit-user-select: text !important; -moz-user-select: text !important; -ms-user-select: text !important; user-select: text !important; }
