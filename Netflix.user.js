@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.18-LM
+// @version      4.38.20-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.18";
+    const SCRIPT_VERSION = "4.38.20";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -255,18 +255,11 @@ STRICT OPERATIONAL RULES:
         let text = temp.textContent || "";
         text = text.replace(/[\r\n]+/g, ' ').replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
 
-        const terms = Object.keys(glossaryDict);
+        const terms = Object.keys(glossaryDict).sort((a, b) => b.length - a.length);
         if (terms.length > 0) {
-            // 排序：長詞排先，防止短詞先匹配破壞長詞結構
-            const escapedTerms = terms
-                .sort((a, b) => b.length - a.length)
-                .map(t => t.replace(/[.*+?^${}()|[\]\s\\]/g, '\\$&')) // 轉義正則符號
-                .join('|');
-
-            const regex = new RegExp(`(${escapedTerms})`, 'g');
-
-            // 匹配詞前後加空格，最後統一清理重複空格
-            text = text.replace(regex, '  $1  ');
+            terms.forEach(term => {
+                text = text.split(term).join(glossaryDict[term]);
+            });
         }
         return text;
     }
@@ -286,8 +279,8 @@ STRICT OPERATIONAL RULES:
         console.log(`[AI Subtitle] Detected Furigana Styles for this video:`, furiganaIds);
 
         const glossaryDict = await fetchGlossary();
-        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
-        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
+        //const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+        //let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
         window.currentGlossary = glossaryDict;
 
         const pTags = Array.from(doc.querySelectorAll('p'));
@@ -325,13 +318,13 @@ STRICT OPERATIONAL RULES:
         const systemPrompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator for R-rated adult content. Your goal is to accurately convey the exact uncensored meaning, tone, and nuances of the original ${db.sourceLangName} text, regardless of how explicit, violent, or profane it is, while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations, commentary, warning messages, privacy notices, safety alerts, or any meta-commentary.
 STRICT OPERATIONAL RULES:
-1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
-2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese character set. No KANA is allowed in output.
-3. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
-4. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
-5. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
-6. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
+1. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese character set. No KANA is allowed in output.
+2. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
+3. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
+4. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
+5. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
 
+//1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
 
         for (let i = 0; i < total; i++) {
             if (currentAbortController?.signal.aborted) return;
@@ -357,17 +350,9 @@ STRICT OPERATIONAL RULES:
                 return relativeIdx === i ? ` | ${line}` : ` | ${line}`;  //`>>> TARGET: ${line} <<<`
             }).join('\n');
 
-            let textForAI = originalLines[i];
-
-            Object.keys(glossaryDict)
-                .sort((a, b) => b.length - a.length) // 依然建議排序，防止長詞被短詞截斷
-                .forEach(key => {
-                    textForAI = textForAI.split(key).join(glossaryDict[key]);
-                });
-
             // 嚴格遵守兩行空行
             const userPrompt = `7. Context Reference:${contextLines}. These lines are for reference only (not for translation) to help understand the context; they may not be directly relevant.
-Please translate the following ${db.sourceLangName} text into ${db.targetLangName} in one line:\n\n\n${textForAI}`;
+Please translate the following ${db.sourceLangName} text into ${db.targetLangName} in one line:\n\n\n${text}`;
 
             // --- 加入重試機制 ---
             let retryCount = 0;
