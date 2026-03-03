@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.15-LM
+// @version      4.38.16-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.15";
+    const SCRIPT_VERSION = "4.38.16";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -367,12 +367,16 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
             let success = false;
             let lastResult = "";
 
-            const containsKorean = (t) => /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(t);
-            const containsJapanese = (t) => /[\u3040-\u309F\u30A0-\u30FF]/.test(t); // Hiragana & Katakana
-            //const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(text);
-            const containsCyrillic = (t) => /[\u0400-\u04FF]/.test(t);
-            const containsArabic = (t) => /[\u0600-\u06FF\u0750-\u077F]/.test(t);
-            const containsEnglish = (t) => /[a-zA-Z]/.test(t);
+            const invalidLanguagePatterns = [
+                /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/, // Korean
+                /[\u3040-\u309F\u30A0-\u30FF]/,             // Japanese (Hiragana & Katakana)
+                /[\u0400-\u04FF]/,                         // Cyrillic (Russian, etc.)
+                /[\u0600-\u06FF\u0750-\u077F]/,             // Arabic
+                /[a-zA-Z]/,                                // English
+                /[\u0900-\u0D7F]/,                         // South Asian (Hindi, etc. 包括 "दरअसल")
+                /[\u0E00-\u0E7F]/                          // Thai (加多個泰文保險)
+            ];
+            const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(text);
 
             while (retryCount <= maxRetries && !success) {
                 const startTime = Date.now();
@@ -397,7 +401,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                 const json = JSON.parse(res.responseText);
                                 const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
                                 lastResult = translated;
-                                let wrongLanguage = containsKorean(translated) || containsJapanese(translated) || containsCyrillic(translated) || containsArabic(translated) || containsEnglish(translated);
+                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated));
+                                let wrongLanguage = isForeignLanguage || containsSimplified(translated);
 
                                 if (wrongLanguage && retryCount < maxRetries) {
                                     console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
