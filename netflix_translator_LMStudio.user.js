@@ -261,7 +261,8 @@ STRICT OPERATIONAL RULES:
 
         const pTags = Array.from(doc.querySelectorAll('p'));
         const originalLines = pTags.map(p => {
-            const getCleanSourceText(p, furiganaIds);
+            const cleanText = getCleanSourceText(p, furiganaIds);
+            return cleanText;
         }).filter(t => t.length > 0);
 
         if (originalLines.length === 0) return;
