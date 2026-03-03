@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.14-LM
+// @version      4.38.15-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.14";
+    const SCRIPT_VERSION = "4.38.15";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -237,7 +237,7 @@ STRICT OPERATIONAL RULES:
         });
 
         let text = temp.textContent || "";
-        text = text.replace(/[\r\n♪～⸺…]+/g, ' ').replace(/\s+/g, ' ').trim();
+        text = text.replace(/[\r\n]+/g, ' ').replace(/[♪～⸺…]+/g, '').replace(/\s+/g, ' ').trim();
 
         const terms = Object.keys(glossaryDict);
         if (terms.length > 0) {
