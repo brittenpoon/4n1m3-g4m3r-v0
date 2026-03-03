@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.21-LM
+// @version      4.38.22-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.21";
+    const SCRIPT_VERSION = "4.38.22";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -236,6 +236,10 @@ STRICT OPERATIONAL RULES:
         oldOpen.apply(this, arguments);
     };
 
+    const toHalfWidth = (str) => str.replace(/[\uff01-\uff5e]/g, s =>
+              String.fromCharCode(s.charCodeAt(0) - 0xfee0)
+          ).toLowerCase();
+
     function getCleanSourceText(node, dynamicStyles = [], glossaryDict = {}) {
         if (!node) return "";
         const temp = node.cloneNode(true);
@@ -251,6 +255,8 @@ STRICT OPERATIONAL RULES:
         temp.querySelectorAll('br').forEach(br => {
             br.replaceWith(document.createTextNode(' '));
         });
+
+        temp = toHalfWidth(temp);
 
         let text = temp.textContent || "";
         text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
@@ -394,20 +400,15 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                 const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
                                 lastResult = translated;
 
-                                let translatedEnglishWords = translated.match(/[a-zA-Z\uff21-\uff3a\uff41-\uff5a]+/g) || [];
-                                let hasNewEnglish = translatedEnglishWords.some(word => {
-                                    // 將全形轉半形方便比對 (選做，或者直接用原始 text 比對)
-                                    let normalWord = word.replace(/[\uff21-\uff3a\uff41-\uff5a]/g, s =>
-                                        String.fromCharCode(s.charCodeAt(0) - 0xfee0)
-                                    );
+                                const hasNewEnglish = (translated, text) => {
+                                    const translatedWords = translated.match(/[a-zA-Z\uff21-\uff3a\uff41-\uff5a]{2,}/g) || [];
+                                    return translatedWords.some(word => {
+                                        const normalizedWord = toHalfWidth(word);
+                                        return !text.includes(normalizedWord);
+                                    });
+                                };
 
-                                    // 如果原始 text 入面「唔包含」呢個英文字 (不分大小寫)
-                                    // 咁呢個英文字就係 AI 亂噴嘅語言
-                                    let regex = new RegExp(normalWord, 'i');
-                                    return !regex.test(text);
-                                });
-
-                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish;
+                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text);
                                 let wrongLanguage = isForeignLanguage || containsSimplified(translated);
 
                                 if (wrongLanguage && retryCount < maxRetries) {
