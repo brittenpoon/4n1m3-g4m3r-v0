@@ -250,7 +250,7 @@ STRICT OPERATIONAL RULES:
             const regex = new RegExp(`(${escapedTerms})`, 'g');
 
             // 匹配詞前後加空格，最後統一清理重複空格
-            text = text.replace(regex, '  $1  ')).trim();
+            text = text.replace(regex, '  $1  ').trim();
         }
         return text;
     }
@@ -347,7 +347,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
             // --- 加入重試機制 ---
             let retryCount = 0;
-            const maxRetries = 20;
+            const maxRetries = 41;
             let success = false;
             let lastResult = "";
 
@@ -372,7 +372,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                     "content": systemPrompt + userPrompt
                                         }
                             ],
-                            temperature: 0.0+ (retryCount * 0.1),
+                            temperature: 0.0 + parseFloat(((retryCount % 21) * 0.1 + (Math.floor(retryCount / 21) * 0.01)).toFixed(2));
                             max_tokens: 1024,
                             stream: false
                         }),
