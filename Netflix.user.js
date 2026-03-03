@@ -237,7 +237,7 @@ STRICT OPERATIONAL RULES:
         });
 
         let text = temp.textContent || "";
-        text = text.replace(/[\r\n]+/g, ' ').replace(/[♪～⸺…]+/g, '').replace(/\s+/g, ' ').trim();
+        text = text.replace(/[\r\n]+/g, ' ').replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
 
         const terms = Object.keys(glossaryDict);
         if (terms.length > 0) {
