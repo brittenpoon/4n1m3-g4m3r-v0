@@ -225,7 +225,7 @@ STRICT OPERATIONAL RULES:
 
         // 1. 移除注音 (Furigana)
         temp.querySelectorAll('rt').forEach(rt => rt.remove());
-        temp.querySelectorAll('span[style*="style10"], span[style*="style4"], span[style*="style7"]').forEach(s => s.remove());
+        temp.querySelectorAll('span:is([style*="style10"], [style*="style4"], [style*="style7"], [style*="style16"])').forEach(s => s.remove());
         temp.querySelectorAll('br').forEach(br => {
           br.replaceWith(document.createTextNode(' '));
         });
