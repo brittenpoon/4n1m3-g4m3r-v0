@@ -182,6 +182,22 @@ STRICT OPERATIONAL RULES:
 
     const events = ['copy', 'contextmenu', 'selectstart', 'mousedown', 'mouseup'];
     events.forEach(evt => document.addEventListener(evt, (e) => e.stopPropagation(), true));
+    //The "Invisible Caret" Script
+    const style = document.createElement('style');
+    style.innerHTML = `
+        /* Makes the blinking cursor invisible everywhere */
+        * {
+            caret-color: transparent !important;
+        }
+
+        /* Ensures text remains selectable even if focused */
+        ::selection {
+            background: #3390FF; /* Standard blue highlight */
+            color: white;
+        }
+    `;
+
+    document.head.appendChild(style);
 
     function triggerInitialPause() {
         if (hasPausedForCurrentClip) return;
