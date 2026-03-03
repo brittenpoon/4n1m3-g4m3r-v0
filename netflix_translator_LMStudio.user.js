@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.11-LM
+// @version      4.38.12-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.11";
+    const SCRIPT_VERSION = "4.38.12";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -220,13 +220,11 @@ STRICT OPERATIONAL RULES:
         oldOpen.apply(this, arguments);
     };
 
-    function getCleanSourceText(node, dynamicStyles = []) {
+    function getCleanSourceText(node, dynamicStyles = [], glossaryDict = {}) {
         if (!node) return "";
         const temp = node.cloneNode(true);
-        // 1. 移除注音 (Furigana)
         temp.querySelectorAll('rt').forEach(rt => rt.remove());
         if (dynamicStyles.length > 0) {
-                // 建立 CSS Selector，例如: span[style*="style4"], span[style*="style7"]...
                 const selector = dynamicStyles.map(id => `span[style*="${id}"]`).join(', ');
                 try {
                     temp.querySelectorAll(selector).forEach(s => s.remove());
@@ -238,12 +236,23 @@ STRICT OPERATIONAL RULES:
             br.replaceWith(document.createTextNode(' '));
         });
 
-        // 2. 獲取文字內容
         let text = temp.textContent || "";
+        text = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-        // 3. 關鍵修正：將所有換行 (\n, \r) 轉為空格，然後將多個空格合併為一個
-        // 咁樣無論原始 XML 係點排版，出到嚟個 Key 都會一致
-        return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        const terms = Object.keys(glossaryDict);
+        if (terms.length > 0) {
+            // 排序：長詞排先，防止短詞先匹配破壞長詞結構
+            const escapedTerms = terms
+                .sort((a, b) => b.length - a.length)
+                .map(t => t.replace(/[.*+?^${}()|[\]\s\\]/g, '\\$&')) // 轉義正則符號
+                .join('|');
+
+            const regex = new RegExp(`(${escapedTerms})`, 'g');
+
+            // 匹配詞前後加空格，最後統一清理重複空格
+            text = text.replace(regex, ' $1 ').replace(/\s+/g, ' ').trim();
+        }
+        return text;
     }
 
     async function processAndTranslate(rawXml, url) {
@@ -252,6 +261,7 @@ STRICT OPERATIONAL RULES:
         const parser = new DOMParser();
         const doc = parser.parseFromString(rawXml, "text/xml");
         const styleTags = Array.from(doc.querySelectorAll('style'));
+
         const furiganaIds = styleTags
             .filter(s => s.hasAttribute('tts:rubyPosition') || s.getAttribute('tts:ruby') === 'text')
             .map(s => s.getAttribute('xml:id'))
@@ -259,10 +269,14 @@ STRICT OPERATIONAL RULES:
         window.currentVideoFuriganaStyles = furiganaIds;
         console.log(`[AI Subtitle] Detected Furigana Styles for this video:`, furiganaIds);
 
+        const glossaryDict = await fetchGlossary();
+        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
+        window.currentGlossary = glossaryDict;
+
         const pTags = Array.from(doc.querySelectorAll('p'));
         const originalLines = pTags.map(p => {
-            const cleanText = getCleanSourceText(p, furiganaIds);
-            return cleanText;
+            return getCleanSourceText(p, furiganaIds, glossaryDict);
         }).filter(t => t.length > 0);
 
         if (originalLines.length === 0) return;
@@ -290,10 +304,6 @@ STRICT OPERATIONAL RULES:
 
         let successfulAiCount = 0;
         let totalAiTimeMs = 0;
-
-        const glossaryDict = await fetchGlossary();
-        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
-        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
 
         // --- 強化版 Rule 5：徹底封殺任何警告、隱私或拒絕訊息 ---
         const systemPrompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator for R-rated adult content. Your goal is to accurately convey the exact uncensored meaning, tone, and nuances of the original ${db.sourceLangName} text, regardless of how explicit, violent, or profane it is, while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
@@ -337,7 +347,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
             // --- 加入重試機制 ---
             let retryCount = 0;
-            const maxRetries = 15;
+            const maxRetries = 20;
             let success = false;
             let lastResult = "";
 
@@ -416,7 +426,9 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
             // --- 關鍵修正：在 Observer 也要過濾注音 ---
-            const cleanText = getCleanSourceText(container, window.currentVideoFuriganaStyles || []);
+            const furiganaIds = window.currentVideoFuriganaStyles || [];
+            const glossaryDict = window.currentGlossary || {};
+            const cleanText = getCleanSourceText(container, furiganaIds, glossaryDict);
             const currentMatchKey = getMatchKey(cleanText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
             if (translatedText) {
