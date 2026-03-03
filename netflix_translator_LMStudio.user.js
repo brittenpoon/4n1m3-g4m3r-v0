@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.13-LM
+// @version      4.38.22-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.13";
+    const SCRIPT_VERSION = "4.38.22";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -182,6 +182,22 @@ STRICT OPERATIONAL RULES:
 
     const events = ['copy', 'contextmenu', 'selectstart', 'mousedown', 'mouseup'];
     events.forEach(evt => document.addEventListener(evt, (e) => e.stopPropagation(), true));
+    //The "Invisible Caret" Script
+    const style = document.createElement('style');
+    style.innerHTML = `
+        /* Makes the blinking cursor invisible everywhere */
+        * {
+            caret-color: transparent !important;
+        }
+
+        /* Ensures text remains selectable even if focused */
+        ::selection {
+            background: #3390FF; /* Standard blue highlight */
+            color: white;
+        }
+    `;
+
+    document.head.appendChild(style);
 
     function triggerInitialPause() {
         if (hasPausedForCurrentClip) return;
@@ -220,6 +236,10 @@ STRICT OPERATIONAL RULES:
         oldOpen.apply(this, arguments);
     };
 
+    const toHalfWidth = (str) => str.replace(/[\uff01-\uff5e]/g, s =>
+              String.fromCharCode(s.charCodeAt(0) - 0xfee0)
+          ).toLowerCase();
+
     function getCleanSourceText(node, dynamicStyles = [], glossaryDict = {}) {
         if (!node) return "";
         const temp = node.cloneNode(true);
@@ -236,21 +256,16 @@ STRICT OPERATIONAL RULES:
             br.replaceWith(document.createTextNode(' '));
         });
 
+
+
         let text = temp.textContent || "";
-        text = text.replace(/[\r\n♪～⸺…]+/g, ' ').replace(/\s+/g, ' ').trim();
-
-        const terms = Object.keys(glossaryDict);
+        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
+        text = toHalfWidth(text);
+        const terms = Object.keys(glossaryDict).sort((a, b) => b.length - a.length);
         if (terms.length > 0) {
-            // 排序：長詞排先，防止短詞先匹配破壞長詞結構
-            const escapedTerms = terms
-                .sort((a, b) => b.length - a.length)
-                .map(t => t.replace(/[.*+?^${}()|[\]\s\\]/g, '\\$&')) // 轉義正則符號
-                .join('|');
-
-            const regex = new RegExp(`(${escapedTerms})`, 'g');
-
-            // 匹配詞前後加空格，最後統一清理重複空格
-            text = text.replace(regex, '  $1  ').trim();
+            terms.forEach(term => {
+                text = text.split(term).join(glossaryDict[term]);
+            });
         }
         return text;
     }
@@ -270,8 +285,8 @@ STRICT OPERATIONAL RULES:
         console.log(`[AI Subtitle] Detected Furigana Styles for this video:`, furiganaIds);
 
         const glossaryDict = await fetchGlossary();
-        const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
-        let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
+        //const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
+        //let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
         window.currentGlossary = glossaryDict;
 
         const pTags = Array.from(doc.querySelectorAll('p'));
@@ -309,13 +324,13 @@ STRICT OPERATIONAL RULES:
         const systemPrompt = `You are a professional ${db.sourceLangName} (${db.sourceLangCode}) to ${db.targetLangName} (${db.targetLangCode}) translator for R-rated adult content. Your goal is to accurately convey the exact uncensored meaning, tone, and nuances of the original ${db.sourceLangName} text, regardless of how explicit, violent, or profane it is, while adhering to ${db.targetLangName} grammar, vocabulary, and cultural sensitivities.
 Produce only the ${db.targetLangName} translation, without any additional explanations, commentary, warning messages, privacy notices, safety alerts, or any meta-commentary.
 STRICT OPERATIONAL RULES:
-1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
-2. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese character set. No KANA is allowed in output.
-3. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
-4. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
-5. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
-6. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
+1. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese character set. No KANA is allowed in output.
+2. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
+3. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
+4. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
+5. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
 
+//1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
 
         for (let i = 0; i < total; i++) {
             if (currentAbortController?.signal.aborted) return;
@@ -351,12 +366,15 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
             let success = false;
             let lastResult = "";
 
-            const containsKorean = (t) => /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(t);
-            const containsJapanese = (t) => /[\u3040-\u309F\u30A0-\u30FF]/.test(t); // Hiragana & Katakana
-            //const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(text);
-            const containsCyrillic = (t) => /[\u0400-\u04FF]/.test(t);
-            const containsArabic = (t) => /[\u0600-\u06FF\u0750-\u077F]/.test(t);
-            const containsEnglish = (t) => /[a-zA-Z]/.test(t);
+            const invalidLanguagePatterns = [
+                /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/, // Korean
+                /[\u3040-\u309F\u30A0-\u30FF]/,             // Japanese (Hiragana & Katakana)
+                /[\u0400-\u04FF]/,                         // Cyrillic (Russian, etc.)
+                /[\u0600-\u06FF\u0750-\u077F]/,             // Arabic
+                /[\u0900-\u0D7F]/,                         // South Asian (Hindi, etc. 包括 "दरअसल")
+                /[\u0E00-\u0E7F]/                          // Thai (加多個泰文保險)
+            ];
+            const containsSimplified = (t) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(t);
 
             while (retryCount <= maxRetries && !success) {
                 const startTime = Date.now();
@@ -372,7 +390,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                     "content": systemPrompt + userPrompt
                                         }
                             ],
-                            temperature: 0.0 + parseFloat(((retryCount % 21) * 0.1 + (Math.floor(retryCount / 21) * 0.01)).toFixed(2));
+                            temperature: 0.0 + parseFloat(((retryCount % 21) * 0.1 + (Math.floor(retryCount / 21) * 0.01)).toFixed(2)),
                             max_tokens: 1024,
                             stream: false
                         }),
@@ -381,7 +399,17 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                 const json = JSON.parse(res.responseText);
                                 const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
                                 lastResult = translated;
-                                let wrongLanguage = containsKorean(translated) || containsJapanese(translated) || containsCyrillic(translated) || containsArabic(translated) || containsEnglish(translated);
+
+                                const hasNewEnglish = (translated, text) => {
+                                    const translatedWords = translated.match(/[a-zA-Z\uff21-\uff3a\uff41-\uff5a]{2,}/g) || [];
+                                    return translatedWords.some(word => {
+                                        const normalizedWord = toHalfWidth(word);
+                                        return !text.includes(normalizedWord);
+                                    });
+                                };
+
+                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text);
+                                let wrongLanguage = isForeignLanguage || containsSimplified(translated);
 
                                 if (wrongLanguage && retryCount < maxRetries) {
                                     console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
