@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.12-LM
+// @version      4.38.13-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.12";
+    const SCRIPT_VERSION = "4.38.13";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -237,7 +237,7 @@ STRICT OPERATIONAL RULES:
         });
 
         let text = temp.textContent || "";
-        text = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        text = text.replace(/[\r\n♪～⸺…]+/g, ' ').replace(/\s+/g, ' ').trim();
 
         const terms = Object.keys(glossaryDict);
         if (terms.length > 0) {
@@ -250,7 +250,7 @@ STRICT OPERATIONAL RULES:
             const regex = new RegExp(`(${escapedTerms})`, 'g');
 
             // 匹配詞前後加空格，最後統一清理重複空格
-            text = text.replace(regex, ' $1 ').replace(/\s+/g, ' ').trim();
+            text = text.replace(regex, '  $1  ')).trim();
         }
         return text;
     }
@@ -353,7 +353,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
             const containsKorean = (t) => /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(t);
             const containsJapanese = (t) => /[\u3040-\u309F\u30A0-\u30FF]/.test(t); // Hiragana & Katakana
-            const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰]/.test(text);
+            //const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(text);
+            const containsCyrillic = (t) => /[\u0400-\u04FF]/.test(t);
             const containsArabic = (t) => /[\u0600-\u06FF\u0750-\u077F]/.test(t);
             const containsEnglish = (t) => /[a-zA-Z]/.test(t);
 
@@ -380,7 +381,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                 const json = JSON.parse(res.responseText);
                                 const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
                                 lastResult = translated;
-                                let wrongLanguage = containsKorean(translated) || containsJapanese(translated) || containsSimplified(translated) || containsArabic(translated) || containsEnglish(translated);
+                                let wrongLanguage = containsKorean(translated) || containsJapanese(translated) || containsCyrillic(translated) || containsArabic(translated) || containsEnglish(translated);
 
                                 if (wrongLanguage && retryCount < maxRetries) {
                                     console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
