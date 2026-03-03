@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.10-LM
+// @version      4.38.11-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.10";
+    const SCRIPT_VERSION = "4.38.11";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -220,14 +220,22 @@ STRICT OPERATIONAL RULES:
         oldOpen.apply(this, arguments);
     };
 
-    function getCleanSourceText(node) {
+    function getCleanSourceText(node, dynamicStyles = []) {
+        if (!node) return "";
         const temp = node.cloneNode(true);
-
         // 1. 移除注音 (Furigana)
         temp.querySelectorAll('rt').forEach(rt => rt.remove());
-        temp.querySelectorAll('span:is([style*="style10"], [style*="style4"], [style*="style7"], [style*="style16"])').forEach(s => s.remove());
+        if (dynamicStyles.length > 0) {
+                // 建立 CSS Selector，例如: span[style*="style4"], span[style*="style7"]...
+                const selector = dynamicStyles.map(id => `span[style*="${id}"]`).join(', ');
+                try {
+                    temp.querySelectorAll(selector).forEach(s => s.remove());
+                } catch (e) {
+                    console.error("Furigana selector error:", e);
+                }
+            }
         temp.querySelectorAll('br').forEach(br => {
-          br.replaceWith(document.createTextNode(' '));
+            br.replaceWith(document.createTextNode(' '));
         });
 
         // 2. 獲取文字內容
@@ -243,10 +251,17 @@ STRICT OPERATIONAL RULES:
         window.processedUrls.add(url);
         const parser = new DOMParser();
         const doc = parser.parseFromString(rawXml, "text/xml");
+        const styleTags = Array.from(doc.querySelectorAll('style'));
+        const furiganaIds = styleTags
+            .filter(s => s.hasAttribute('tts:rubyPosition') || s.getAttribute('tts:ruby') === 'text')
+            .map(s => s.getAttribute('xml:id'))
+            .filter(id => id);
+        window.currentVideoFuriganaStyles = furiganaIds;
+        console.log(`[AI Subtitle] Detected Furigana Styles for this video:`, furiganaIds);
+
         const pTags = Array.from(doc.querySelectorAll('p'));
         const originalLines = pTags.map(p => {
-            const cleanText = getCleanSourceText(p);
-            return cleanText;
+            const getCleanSourceText(p, furiganaIds);
         }).filter(t => t.length > 0);
 
         if (originalLines.length === 0) return;
@@ -400,7 +415,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
         document.querySelectorAll('.player-timedtext-text-container').forEach(container => {
             if (container.dataset.aiTranslated === "true") return;
             // --- 關鍵修正：在 Observer 也要過濾注音 ---
-            const cleanText = getCleanSourceText(container);
+            const cleanText = getCleanSourceText(container, window.currentVideoFuriganaStyles || []);
             const currentMatchKey = getMatchKey(cleanText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
             if (translatedText) {
