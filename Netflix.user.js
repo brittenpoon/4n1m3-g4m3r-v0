@@ -372,7 +372,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                     "content": systemPrompt + userPrompt
                                         }
                             ],
-                            temperature: 0.0 + parseFloat(((retryCount % 21) * 0.1 + (Math.floor(retryCount / 21) * 0.01)).toFixed(2));
+                            temperature: 0.0 + parseFloat(((retryCount % 21) * 0.1 + (Math.floor(retryCount / 21) * 0.01)).toFixed(2)),
                             max_tokens: 1024,
                             stream: false
                         }),
