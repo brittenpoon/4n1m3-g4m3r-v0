@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      4.38.17-LM
+// @version      4.38.18-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "4.38.17";
+    const SCRIPT_VERSION = "4.38.18";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -357,9 +357,17 @@ STRICT OPERATIONAL RULES:
                 return relativeIdx === i ? ` | ${line}` : ` | ${line}`;  //`>>> TARGET: ${line} <<<`
             }).join('\n');
 
+            let textForAI = originalLines[i];
+
+            Object.keys(glossaryDict)
+                .sort((a, b) => b.length - a.length) // 依然建議排序，防止長詞被短詞截斷
+                .forEach(key => {
+                    textForAI = textForAI.split(key).join(glossaryDict[key]);
+                });
+
             // 嚴格遵守兩行空行
             const userPrompt = `7. Context Reference:${contextLines}. These lines are for reference only (not for translation) to help understand the context; they may not be directly relevant.
-Please translate the following ${db.sourceLangName} text into ${db.targetLangName} in one line:\n\n\n${text}`;
+Please translate the following ${db.sourceLangName} text into ${db.targetLangName} in one line:\n\n\n${textForAI}`;
 
             // --- 加入重試機制 ---
             let retryCount = 0;
@@ -375,7 +383,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                 /[\u0900-\u0D7F]/,                         // South Asian (Hindi, etc. 包括 "दरअसल")
                 /[\u0E00-\u0E7F]/                          // Thai (加多個泰文保險)
             ];
-            const containsSimplified = (text) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(text);
+            const containsSimplified = (t) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(t);
 
             while (retryCount <= maxRetries && !success) {
                 const startTime = Date.now();
