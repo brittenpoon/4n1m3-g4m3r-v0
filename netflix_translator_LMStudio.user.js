@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.7-LM
+// @version      5.0.8-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.7";
+    const SCRIPT_VERSION = "5.0.8";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -406,8 +406,11 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                         onload: function(res) {
                             try {
                                 const json = JSON.parse(res.responseText);
-                                let translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
-                                translated = translateToHK(translated);
+                                const rawtranslated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
+                                const translated = translateToHK(rawtranslated);
+                                if (translated !== rawtranslated) {
+                                    console.log(rawtranslated, ` ➔ translateToHK ➔ `, translated);
+                                }
                                 lastResult = translated;
 
                                 const hasNewEnglish = (translated, text) => {
