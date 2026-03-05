@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.2-LM
+// @version      5.0.3-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.2";
+    const SCRIPT_VERSION = "5.0.3";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -260,13 +260,13 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
+        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
                 text = text.split(term).join(glossaryDict[term]);
             });
         }
-        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
-        return text;
+ return text;
     }
 
     async function processAndTranslate(rawXml, url) {
@@ -284,10 +284,12 @@ STRICT OPERATIONAL RULES:
         console.log(`[AI Subtitle] Detected Furigana Styles for this video:`, furiganaIds);
 
         const glossaryDict = await fetchGlossary();
+        console.log(`glossaryDict: `,glossaryDict);
         //const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
         //let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
         window.currentGlossary = glossaryDict;
         const terms = Object.keys(glossaryDict).sort((a, b) => b.length - a.length);
+        console.log(`terms: `,terms);
         window.currentTerms = terms;
 
         const pTags = Array.from(doc.querySelectorAll('p'));
