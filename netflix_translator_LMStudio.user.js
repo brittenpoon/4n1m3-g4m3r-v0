@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.1-LM
+// @version      5.0.2-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.1";
+    const SCRIPT_VERSION = "5.0.2";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -240,7 +240,7 @@ STRICT OPERATIONAL RULES:
               String.fromCharCode(s.charCodeAt(0) - 0xfee0)
           ).toLowerCase();
 
-    function getCleanSourceText(node, dynamicStyles = [], glossaryDict = {}) {
+    function getCleanSourceText(node, dynamicStyles = [], glossaryDict = {}, terms = []) {
         if (!node) return "";
         const temp = node.cloneNode(true);
         temp.querySelectorAll('rt').forEach(rt => rt.remove());
@@ -260,7 +260,6 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
-        const terms = Object.keys(glossaryDict).sort((a, b) => b.length - a.length);
         if (terms.length > 0) {
             terms.forEach(term => {
                 text = text.split(term).join(glossaryDict[term]);
@@ -288,10 +287,12 @@ STRICT OPERATIONAL RULES:
         //const glossaryPairs = Object.entries(glossaryDict).map(([k, v]) => `${k}=${v}`);
         //let glossaryString = glossaryPairs.length > 0 ? glossaryPairs.join(' | ') : "None";
         window.currentGlossary = glossaryDict;
+        const terms = Object.keys(glossaryDict).sort((a, b) => b.length - a.length);
+        window.currentTerms = terms;
 
         const pTags = Array.from(doc.querySelectorAll('p'));
         const originalLines = pTags.map(p => {
-            return getCleanSourceText(p, furiganaIds, glossaryDict);
+            return getCleanSourceText(p, furiganaIds, glossaryDict, terms);
         }).filter(t => t.length > 0);
 
         if (originalLines.length === 0) return;
@@ -457,7 +458,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
             // --- 關鍵修正：在 Observer 也要過濾注音 ---
             const furiganaIds = window.currentVideoFuriganaStyles || [];
             const glossaryDict = window.currentGlossary || {};
-            const cleanText = getCleanSourceText(container, furiganaIds, glossaryDict);
+            const terms = window.currentTerms || [];
+            const cleanText = getCleanSourceText(container, furiganaIds, glossaryDict, terms);
             const currentMatchKey = getMatchKey(cleanText);
             const translatedText = window.subtitleMap.get(currentMatchKey);
             if (translatedText) {
