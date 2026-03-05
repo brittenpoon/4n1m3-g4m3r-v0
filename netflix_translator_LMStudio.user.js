@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.5-LM
+// @version      5.0.6-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -12,13 +12,13 @@
 // @connect      localhost
 // @connect      raw.githubusercontent.com
 // @connect      github.com
-// @require      https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js
+// @require      https://cdn.jsdelivr.net/npm/@willh/opencc-js@1.2.0/dist/umd/full.min.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.5";
+    const SCRIPT_VERSION = "5.0.6";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
