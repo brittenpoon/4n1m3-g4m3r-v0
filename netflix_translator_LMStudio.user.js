@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.4-LM
+// @version      5.0.5-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.4";
+    const SCRIPT_VERSION = "5.0.5";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -381,7 +381,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                 /[\u0900-\u0D7F]/,                         // South Asian (Hindi, etc. 包括 "दरअसल")
                 /[\u0E00-\u0E7F]/                          // Thai (加多個泰文保險)
             ];
-            const containsSimplified = (t) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(t);
+            //const containsSimplified = (t) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(t);
 
             while (retryCount <= maxRetries && !success) {
                 const startTime = Date.now();
@@ -417,9 +417,9 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                 };
 
                                 let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text);
-                                let wrongLanguage = isForeignLanguage || containsSimplified(translated);
+                                //let wrongLanguage = isForeignLanguage || containsSimplified(translated);
 
-                                if (wrongLanguage && retryCount < maxRetries) {
+                                if (isForeignLanguage && retryCount < maxRetries) {
                                     console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
                                     retryCount++;
                                     resolve(); // 結束 Promise 但 success 仍為 false，會觸發 while 再次執行
