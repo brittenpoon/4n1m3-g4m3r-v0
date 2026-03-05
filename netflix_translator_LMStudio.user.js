@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.8-LM
+// @version      5.0.9-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.8";
+    const SCRIPT_VERSION = "5.0.9";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -97,7 +97,7 @@
     function cleanAndGetCache() {
         let cache = GM_getValue('ai_subtitle_cache', {});
         const now = Date.now();
-        const ONE_DAY = 24 * 60 * 60 * 1000;
+        const ONE_DAY = 48 * 60 * 60 * 1000;
         let isChanged = false;
         for (let hash in cache) { if (now - cache[hash].timestamp > ONE_DAY) { delete cache[hash]; isChanged = true; } }
         if (isChanged) GM_setValue('ai_subtitle_cache', cache);
