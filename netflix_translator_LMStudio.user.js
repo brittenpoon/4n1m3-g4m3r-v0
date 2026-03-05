@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.3-LM
+// @version      5.0.4-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -12,15 +12,21 @@
 // @connect      localhost
 // @connect      raw.githubusercontent.com
 // @connect      github.com
+// @require      https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.3";
+    const SCRIPT_VERSION = "5.0.4";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
+
+    const translateToHK = OpenCC.Converter({ from: 'cn', to: 'hk' });
+    function processSubtitle(text) {
+        return translateToHK(text);
+    }
 
     // --- 核心 API 配置變更 ---
     // LM Studio 預設連接埠為 1234
@@ -331,7 +337,8 @@ STRICT OPERATIONAL RULES:
 2. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 3. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
 4. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
-5. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
+5. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.
+6. STRICTLY preserve all Arabic numerals (0-9). Do not convert digits to Chinese characters.`;
 
 //1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
 
@@ -400,7 +407,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                         onload: function(res) {
                             try {
                                 const json = JSON.parse(res.responseText);
-                                const translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
+                                let translated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
+                                translated = translateToHK(translated);
                                 lastResult = translated;
 
                                 const hasNewEnglish = (translated, text) => {
