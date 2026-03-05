@@ -24,9 +24,6 @@
     let modelBuildPromise = null;
 
     const translateToHK = OpenCC.Converter({ from: 'cn', to: 'hk' });
-    function processSubtitle(text) {
-        return translateToHK(text);
-    }
 
     // --- 核心 API 配置變更 ---
     // LM Studio 預設連接埠為 1234
