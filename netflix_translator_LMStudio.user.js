@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.6-LM
+// @version      5.0.7-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.6";
+    const SCRIPT_VERSION = "5.0.7";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -263,10 +263,12 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
-        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～~⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
+        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/[♪～~⸺…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
-                text = text.split(term).join(glossaryDict[term]);
+                const fuzzyPattern = term.split('').join('ー*') + 'ー*';
+                const regex = new RegExp(fuzzyPattern, 'g');
+                text = text.replace(regex, glossaryDict[term]);
             });
         }
  return text;
@@ -481,15 +483,46 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                 const baseFontSize = parseFloat(style.fontSize);
                 const originalSpans = Array.from(outerSpan.querySelectorAll('span')).filter(s => s.getAttribute('lang') !== 'zh' && !s.classList.contains('ai-translated-span'));
                 originalSpans.forEach(s => s.style.fontSize = (baseFontSize * 0.8) + "px");
-                const br = document.createElement('br'); br.className = 'ai-translated-br'; outerSpan.appendChild(br);
-                const aiSpan = innerSpan.cloneNode(true);
-                aiSpan.classList.add('ai-translated-span');
-                aiSpan.setAttribute('lang', 'zh');
-                aiSpan.style.fontSize = baseFontSize + "px";
-                aiSpan.innerText = translatedText;
-                outerSpan.appendChild(aiSpan);
-                container.dataset.aiTranslated = "true";
-            }
+                const brPrefix = document.createElement('br');
+                brPrefix.className = 'ai-translated-br';
+                outerSpan.appendChild(brPrefix);
+                let chunkSize = 999; // 預設不分段
+                    if (isVertical && translatedText.length > 18) {
+                        chunkSize = 18; // 直排每 18 字換列
+                    } else if (!isVertical && translatedText.length > 30) {
+                        chunkSize = 30; // 橫排每 30 字換行
+                    }
+
+                    if (translatedText.length > chunkSize) {
+                        for (let i = 0; i < translatedText.length; i += chunkSize) {
+                            const chunk = translatedText.substring(i, i + chunkSize);
+
+                            const aiSpan = innerSpan.cloneNode(true);
+                            aiSpan.classList.add('ai-translated-span');
+                            aiSpan.setAttribute('lang', 'zh');
+                            aiSpan.style.fontSize = baseFontSize + "px";
+                            aiSpan.innerText = chunk;
+                            outerSpan.appendChild(aiSpan);
+
+                            // 如果還有後續文字，添加換行
+                            if (i + chunkSize < translatedText.length) {
+                                const brBetween = document.createElement('br');
+                                brBetween.className = 'ai-translated-br';
+                                outerSpan.appendChild(brBetween);
+                            }
+                        }
+                    } else {
+                        // 一般情況
+                        const aiSpan = innerSpan.cloneNode(true);
+                        aiSpan.classList.add('ai-translated-span');
+                        aiSpan.setAttribute('lang', 'zh');
+                        aiSpan.style.fontSize = baseFontSize + "px";
+                        aiSpan.innerText = translatedText;
+                        outerSpan.appendChild(aiSpan);
+                    }
+
+                    container.dataset.aiTranslated = "true";
+                }
         });
     });
 
