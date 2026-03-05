@@ -263,7 +263,7 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
-        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
+        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/ー /g, "").replace(/[♪～~⸺ー…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
                 text = text.split(term).join(glossaryDict[term]);
