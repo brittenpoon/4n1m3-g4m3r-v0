@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.9-LM
+// @version      5.0.10-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.9";
+    const SCRIPT_VERSION = "5.0.10";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -204,12 +204,12 @@ STRICT OPERATIONAL RULES:
 
     function triggerInitialPause() {
         if (hasPausedForCurrentClip) return;
-        const video = document.querySelector('video');
-        if (video && !video.paused) {
-            const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
-            if (pauseBtn) pauseBtn.click(); else video.pause();
+        //const video = document.querySelector('video');
+        //if (video && !video.paused) {
+        //    const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
+        //    if (pauseBtn) pauseBtn.click(); else video.pause();
             hasPausedForCurrentClip = true;
-        }
+        //}
     }
 
     function updateUIProgress(current, total, avgMs = 0, etaMs = 0, isBuilding = false) {
