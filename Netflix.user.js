@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Netflix Auto Next, Skip Intro & Recap (With UI Check)
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Skips Netflix extras but pauses for 2 mins if bottom controls are visible
 // @author       You
 // @match        https://www.netflix.com/*
@@ -17,7 +17,7 @@
     function safeClick(selector, label) {
         const button = document.querySelector(selector);
         if (!button) return false;
-
+        /*
         // Button found! Now start the 5s high-frequency check for UI interference
         console.log(`[${new Date().toLocaleTimeString()}] Potential "${label}" found. Checking for UI...`);
 
@@ -49,6 +49,10 @@
                 }
             }
         }, 500);
+
+        */
+
+        button.click();
 
         return true;
     }
