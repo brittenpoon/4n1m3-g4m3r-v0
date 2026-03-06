@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.10-LM
+// @version      5.0.11-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.10";
+    const SCRIPT_VERSION = "5.0.11";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -39,7 +39,7 @@
     const db = {
         get isEnabled() { return GM_getValue('ai_sub_enabled', true); },
         set isEnabled(v) { GM_setValue('ai_sub_enabled', v); },
-        get baseModel() { return GM_getValue('ai_model_name', 'translategemma-4b-it'); },
+        get baseModel() { return GM_getValue('ai_model_name', 'translategemma-12b-it-i1'); },
         set baseModel(v) { GM_setValue('ai_model_name', v); },
         get sourceLangName() { return GM_getValue('ai_source_lang_name', 'Japanese'); },
         set sourceLangName(v) { GM_setValue('ai_source_lang_name', v); },
@@ -66,7 +66,7 @@
     window.subtitleMap = new Map();
     window.processedUrls = new Set();
     window.isAITranslating = false;
-    let hasPausedForCurrentClip = false;
+    let hasPausedForCurrentClip = true;
 
     const getMatchKey = (text) => text ? text.replace(/[\s\r\n\u200B-\u200D\uFEFF]+/g, '').trim() : '';
     const getTimestamp = () => new Date().toLocaleTimeString([], {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
@@ -97,7 +97,7 @@
     function cleanAndGetCache() {
         let cache = GM_getValue('ai_subtitle_cache', {});
         const now = Date.now();
-        const ONE_DAY = 48 * 60 * 60 * 1000;
+        const ONE_DAY = 24 * 60 * 60 * 1000;
         let isChanged = false;
         for (let hash in cache) { if (now - cache[hash].timestamp > ONE_DAY) { delete cache[hash]; isChanged = true; } }
         if (isChanged) GM_setValue('ai_subtitle_cache', cache);
@@ -204,12 +204,12 @@ STRICT OPERATIONAL RULES:
 
     function triggerInitialPause() {
         if (hasPausedForCurrentClip) return;
-        //const video = document.querySelector('video');
-        //if (video && !video.paused) {
-        //    const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
-        //    if (pauseBtn) pauseBtn.click(); else video.pause();
+        const video = document.querySelector('video');
+        if (video && !video.paused) {
+            const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
+            if (pauseBtn) pauseBtn.click(); else video.pause();
             hasPausedForCurrentClip = true;
-        //}
+        }
     }
 
     function updateUIProgress(current, total, avgMs = 0, etaMs = 0, isBuilding = false) {
@@ -304,7 +304,7 @@ STRICT OPERATIONAL RULES:
 
         if (originalLines.length === 0) return;
 
-        triggerInitialPause();
+        //triggerInitialPause();
         window.isAITranslating = true;
         currentAbortController = new AbortController();
 
@@ -335,9 +335,8 @@ STRICT OPERATIONAL RULES:
 1. POSITIVE LANGUAGE LOCK (CRITICAL): You are ONLY allowed to output characters from the Traditional Chinese character set. No KANA is allowed in output.
 2. TRANSLATE NAMES & KANA: Unknown character names, unknown terms, and unknown bracketed words in Hiragana (平假名) and Katakana (片假名) MUST be converted to English, then translated into proper ${db.targetLangName} equivalents.
 3. UNCENSORED & RUDE TONE: This content contains violence, profanity, and sexual themes. You MUST translate all rude or explicit language directly. Never soften or harmonize.
-4. SYMBOL RETENTION: All punctuations, symbols (e.g. ♪ ～ … ⸺ ) must be kept as-is in the translated text. Furthermore, do NOT explicitly add subjects or objects (e.g., "I", "You", "He/She") if they are not present in the original Japanese sentence. Maintain the original's sentence structure.
-5. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.
-6. STRICTLY preserve all Arabic numerals (0-9). Do not convert digits to Chinese characters.`;
+4. Strictly avoid inserting implied subjects (like "I" or "me") that do not exist in the source. If the sentence is an exclamation or a noun-ending phrase (e.g., "うさ耳！"), translate it as a fragment or exclamation, not a full grammatical sentence.
+5. CHARACTER PURIFICATION: Convert Japanese Kanji or Simplified Chinese charaters to ${db.targetLangName} charaters.`;
 
 //1. MANDATORY GLOSSARY: ${glossaryString}. These specific translations, including names, terms and slang from Japanese (ja) to${db.targetLangName} (${db.targetLangCode}) must be used. They take absolute precedence.
 
@@ -385,6 +384,31 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
             ];
             //const containsSimplified = (t) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(t);
 
+            function isAIGeneratedRefusal(text) {
+                if (!text || text.length < 10) return false;
+
+                // 這些是 AI 拒絕翻譯時最常出現的詞彙
+                const refusalKeywords = [
+                    "對不起", "翻譯", "日語", "日文", "文字", "對應", "繁體",
+                    "詞語", "內容", "不適宜", "無法", "包含", "隨時",
+                    "露骨", "提供", "轉述", "指令", "規則", "詢問"
+                ];
+
+                // 計算這段文字中了多少個關鍵字
+                let matchCount = 0;
+                refusalKeywords.forEach(word => {
+                    if (text.includes(word)) {
+                        matchCount++;
+                    }
+                });
+
+                // 設定門檻：如果中了 3 個或以上，就判定為拒絕
+                const isRefusal = matchCount >= 3;
+
+                // 額外保險：AI 的拒絕通常比較長
+                return isRefusal && text.length > 12;
+            }
+
             while (retryCount <= maxRetries && !success) {
                 const startTime = Date.now();
                 await new Promise((resolve) => {
@@ -424,7 +448,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                 let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text);
                                 //let wrongLanguage = isForeignLanguage || containsSimplified(translated);
 
-                                if (isForeignLanguage && retryCount < maxRetries) {
+                                if ((isAIGeneratedRefusal(translated) ||isForeignLanguage) && retryCount < maxRetries) {
                                     console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
                                     retryCount++;
                                     resolve(); // 結束 Promise 但 success 仍為 false，會觸發 while 再次執行
