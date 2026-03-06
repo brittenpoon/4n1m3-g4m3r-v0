@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.12-LM
+// @version      5.0.13-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.12";
+    const SCRIPT_VERSION = "5.0.13";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -263,7 +263,7 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
-        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/[♪～~⸺…]+/g, '').replace(/\s+/g, ' ').trim();
+        text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/[♪〜～～⁓~⸺…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
                 const fuzzyPattern = term.split('').join('ー*') + 'ー*';
