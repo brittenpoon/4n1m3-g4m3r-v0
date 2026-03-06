@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.11-LM
+// @version      5.0.12-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.11";
+    const SCRIPT_VERSION = "5.0.12";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -97,7 +97,7 @@
     function cleanAndGetCache() {
         let cache = GM_getValue('ai_subtitle_cache', {});
         const now = Date.now();
-        const ONE_DAY = 24 * 60 * 60 * 1000;
+        const ONE_DAY = 48 * 60 * 60 * 1000;
         let isChanged = false;
         for (let hash in cache) { if (now - cache[hash].timestamp > ONE_DAY) { delete cache[hash]; isChanged = true; } }
         if (isChanged) GM_setValue('ai_subtitle_cache', cache);
@@ -203,13 +203,13 @@ STRICT OPERATIONAL RULES:
     document.head.appendChild(style);
 
     function triggerInitialPause() {
-        if (hasPausedForCurrentClip) return;
-        const video = document.querySelector('video');
-        if (video && !video.paused) {
-            const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
-            if (pauseBtn) pauseBtn.click(); else video.pause();
+        //if (hasPausedForCurrentClip) return;
+        //const video = document.querySelector('video');
+        //if (video && !video.paused) {
+        //    const pauseBtn = document.querySelector('[data-uia="control-play-pause-pause"]');
+        //    if (pauseBtn) pauseBtn.click(); else video.pause();
             hasPausedForCurrentClip = true;
-        }
+        //}
     }
 
     function updateUIProgress(current, total, avgMs = 0, etaMs = 0, isBuilding = false) {
@@ -304,7 +304,7 @@ STRICT OPERATIONAL RULES:
 
         if (originalLines.length === 0) return;
 
-        //triggerInitialPause();
+        triggerInitialPause();
         window.isAITranslating = true;
         currentAbortController = new AbortController();
 
