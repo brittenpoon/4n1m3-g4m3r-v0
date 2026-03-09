@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.14-LM
+// @version      5.0.15-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -13,17 +13,30 @@
 // @connect      raw.githubusercontent.com
 // @connect      github.com
 // @require      https://cdn.jsdelivr.net/npm/@willh/opencc-js@1.2.0/dist/umd/full.min.js
+// @require      https://unpkg.com/nzh/dist/nzh.min.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.14";
+    const SCRIPT_VERSION = "5.0.15";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
 
     const translateToHK = OpenCC.Converter({ from: 'cn', to: 'hk' });
+
+    const nzh = Nzh.hk;
+    function convertText(input) {
+        if (!input) return "";
+        return input.replace(/\d+(\.\d+)?/g, (match) => {
+            try {
+                return nzh.encode(match);
+            } catch (e) {
+                return match;
+            }
+        });
+    }
 
     // --- 核心 API 配置變更 ---
     // LM Studio 預設連接埠為 1234
@@ -263,6 +276,7 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
+        text = convertText(text);
         text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/[♪〜～～⁓~⸺…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
@@ -592,6 +606,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
                             const aiSpan = innerSpan.cloneNode(true);
                             aiSpan.classList.add('ai-translated-span');
+                            aiSpan.style.textCombineUpright = "none";
+                            aiSpan.style.webkitTextCombine = "none";
                             aiSpan.setAttribute('lang', 'zh');
                             aiSpan.style.fontSize = baseFontSize + "px";
                             aiSpan.innerText = chunk;
@@ -608,6 +624,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                         // 一般情況
                         const aiSpan = innerSpan.cloneNode(true);
                         aiSpan.classList.add('ai-translated-span');
+                        aiSpan.style.textCombineUpright = "none";
+                        aiSpan.style.webkitTextCombine = "none";
                         aiSpan.setAttribute('lang', 'zh');
                         aiSpan.style.fontSize = baseFontSize + "px";
                         aiSpan.innerText = translatedText;
