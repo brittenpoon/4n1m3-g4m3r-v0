@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.13-LM
+// @version      5.0.14-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.13";
+    const SCRIPT_VERSION = "5.0.14";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -376,7 +376,6 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
             const invalidLanguagePatterns = [
                 /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/, // Korean
-                /[\u3040-\u309F\u30A0-\u30FF]/,             // Japanese (Hiragana & Katakana)
                 /[\u0400-\u04FF]/,                         // Cyrillic (Russian, etc.)
                 /[\u0600-\u06FF\u0750-\u077F]/,             // Arabic
                 /[\u0900-\u0D7F]/,                         // South Asian (Hindi, etc. 包括 "दरअसल")
@@ -389,8 +388,8 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
                 // 這些是 AI 拒絕翻譯時最常出現的詞彙
                 const refusalKeywords = [
-                    "對不起", "翻譯", "日語", "日文", "文字", "對應", "繁體",
-                    "詞語", "內容", "不適宜", "無法", "包含", "隨時",
+                    "對不起", "翻譯", "日語", "日文", "文字", "對應", "繁體", "當然", "按照", "要求", "完全", "不加", "修飾", "方式",
+                    "詞語", "內容", "不適宜", "無法", "包含", "隨時", "內容",
                     "露骨", "提供", "轉述", "指令", "規則", "詢問"
                 ];
 
@@ -445,10 +444,77 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                     });
                                 };
 
-                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text);
+                                const invalidJapaneseKana = (translated, text) => {
+                                    // 1. Define bracket pairs (Standard, Full-width, Square, Curly)
+                                    const brackets = /[\(\)\[\]\{\}\uff08\uff09\u3010\u3011\u300c\u300d]/g;
+                                    const separators = /[:\uff1a\s]/g;
+                                    const kanaPattern = /[\u3040-\u309F\u30A0-\u30FF]/;
+                                    const bracketContentRegex = /[\(\uff08\u300c\u3010\[][^\(\)\uff08\uff09\u300c\u300d\u3010\u3011\[\]]+[\)\uff09\u300d\u3011\]]/g;
+                                    const sourceMatches = text.match(bracketContentRegex) || [];
+                                    if (sourceMatches.length === 0) {
+                                        // Just check if the translation contains any Japanese Kana at all
+                                        return kanaPattern.test(translated);
+                                    }
+                                    const allowedPhrases = sourceMatches.map(m => m.replace(brackets, ''));
+                                    let cleanedTranslated = translated;
+                                    allowedPhrases.forEach(phrase => {
+                                        cleanedTranslated = cleanedTranslated.split(phrase).join('');
+                                    });
+
+                                    // Remove structural symbols so they don't count as "content"
+                                    cleanedTranslated = cleanedTranslated.replace(brackets, '').replace(separators, '');
+
+                                    // Check if any Kana remains outside the "protected" bracket content
+                                    return kanaPattern.test(cleanedTranslated)
+                                };
+
+                                const isUnreasonablyLong = (translated, text, sourceLangName) => {
+                                    if (sourceLangName !== 'Japanese') return false;
+
+                                    const sourceLen = text.replace(/\s/g, '').length;
+                                    const transLen = translated.replace(/\s/g, '').length;
+
+                                    const MAX_RATIO = 1.55;
+
+                                    if (sourceLen > 0 && transLen > (sourceLen * MAX_RATIO + 5)) {
+                                        return true; // Too long!
+                                    }
+
+                                    const MIN_RATIO = 0.2;
+                                    if (sourceLen > 10 && (transLen / sourceLen) < MIN_RATIO) {
+                                        return true; // Too short!
+                                    }
+
+                                    return false;
+                                };
+
+                                const hasInvalidNewlines = (translated) => {
+                                    // 1. If there are no newlines at all, it's fine
+                                    if (!translated.includes('\n')) return false;
+
+                                    // 2. Check for "Internal" newlines or multiple "Trailing" newlines
+                                    // This regex looks for:
+                                    // - Any \n followed by another \n (double newlines)
+                                    // - Any \n followed by more text (internal newline)
+                                    const invalidNewlinePattern = /\n(.|\n)/;
+
+                                    if (invalidNewlinePattern.test(translated)) {
+                                        return true; // Found a newline that isn't the single final character
+                                    }
+
+                                    // 3. One more check: If the ONLY newline is NOT at the very end
+                                    if (translated.indexOf('\n') !== translated.length - 1) {
+                                        return true;
+                                    }
+
+                                    return false; // Only one \n exists and it's at the end
+                                };
+
+
+                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text) || invalidJapaneseKana(translated, text);
                                 //let wrongLanguage = isForeignLanguage || containsSimplified(translated);
 
-                                if ((isAIGeneratedRefusal(translated) ||isForeignLanguage) && retryCount < maxRetries) {
+                                if ((isAIGeneratedRefusal(translated) || isForeignLanguage || isUnreasonablyLong(translated, text, db.sourceLangName) || hasInvalidNewlines(translated)) && retryCount < maxRetries) {
                                     console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
                                     retryCount++;
                                     resolve(); // 結束 Promise 但 success 仍為 false，會觸發 while 再次執行
