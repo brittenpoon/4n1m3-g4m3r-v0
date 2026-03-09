@@ -480,7 +480,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                                         return true; // Too long!
                                     }
 
-                                    const MIN_RATIO = 0.2;
+                                    const MIN_RATIO = 0.3;
                                     if (sourceLen > 10 && (transLen / sourceLen) < MIN_RATIO) {
                                         return true; // Too short!
                                     }
