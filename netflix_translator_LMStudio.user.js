@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.16-LM
+// @version      5.0.17-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.16";
+    const SCRIPT_VERSION = "5.0.17";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -43,14 +43,14 @@
         if (sourceLangName !== 'Japanese') return [false, ""];
 
         // 1. 預處理：去除引號、空格、全形空格，確保數字連貫
-        let cleanText = text.replace(/['\s\u3000]/g, '');
-        let cleanTranslated = translated.replace(/['\s\u3000]/g, '');
+        let cleanText = text;
+        let cleanTranslated = translated;
 
         // 2. 排除詞：消除非數值的干擾
         const exclusions = [
-            "一度", "一貫", "一體", "一体", "一併", "四方", "統一", "万一", "万分", "萬一", "萬分", "一瞬", "三半",
-            "一流", "一番", "一樣", "一致", "一定", "一路", "一起", "一切", "一般", "一下", "一緒", "下一集", "一髪",
-            "一些", "一堆", "一無", "第一次", "一直", "一輛", "一家", "多", "一堂", "一份", "一點", "同樣",
+            "一度", "一貫", "一體", "一体", "一併", "四方", "統一", "万一", "万分", "萬一", "萬分", "一瞬", "三半", "一見鍾情",
+            "一流", "一番", "一樣", "一致", "一定", "一路", "一起", "一切", "一般", "一下", "一緒", "下一集", "一髪", "同一","一會",
+            "一些", "一堆", "一無", "第一次", "一直", "一輛", "一家", "多", "一堂", "一份", "一點", "同樣", "一目", "三踏板",
             "兩者", "一身", "二度", "一無", "一種", "一斉", "一齊", "一氣", "一気", "一旦", "一角", "一邊", "三明治"
         ];
         const exclusionRegex = new RegExp(exclusions.join('|'), 'g');
@@ -60,7 +60,7 @@
 
         // 3. 片假名配置
         const kanaNumMap = {
-            'ゼロ': 0, 'ワン': 1, 'トゥー': 2, 'スリー': 3, 'フォー': 4,
+            'ゼロ': 0, 'ワン': 1, 'トゥー': 2, 'ツー' :2, 'スリー': 3, 'フォー': 4,
             'ファイブ': 5, 'シックス': 6, 'セブン': 7, 'エイト': 8, 'ナイン': 9,
             'イレブン': 11, 'トゥエルブ': 12, 'サーティーン': 13, 'フォーティーン': 14,
             'フィフティーン': 15, 'シックスティーン': 16, 'セブンティーン': 17,
@@ -79,14 +79,40 @@
             let vals = [];
 
             // --- 處理片假名 ---
-            const kanaMatches = str.match(kanaRegex) || [];
-            kanaMatches.forEach(m => {
-                const index = str.indexOf(m);
+            const kanaMatches = [...str.matchAll(new RegExp(Object.keys(kanaNumMap).join('|'), 'g'))];
+
+            kanaMatches.forEach(match => {
+                const m = match[0];
+                const index = match.index;
                 const prevChar = str.charAt(index - 1);
                 const nextChar = str.charAt(index + m.length);
-                const isPartOfLongWord = /[\u30A0-\u30FF]/.test(prevChar) || /[\u30A0-\u30FF]/.test(nextChar);
 
-                if (!isPartOfLongWord) {
+                // 判斷前後是否為片假名
+                const isPrevKana = /[\u30A0-\u30FF]/.test(prevChar);
+                const isNextKana = /[\u30A0-\u30FF]/.test(nextChar);
+
+                let isRealNumber = true;
+
+                // 邏輯：如果前後是片假名，檢查這個「鄰居」是不是也是數字的一部分
+                // 如果鄰居只是普通片假名（如「ウエイト」中的「ウ」），則判定為單字，不提取
+                if (isPrevKana) {
+                    // 往前看一個字，如果不是數字 Map 的結尾，就當它是普通單詞
+                    const possibleEnding = str.substring(Math.max(0, index - 4), index);
+                    if (!Object.keys(kanaNumMap).some(k => possibleEnding.endsWith(k))) {
+                        isRealNumber = false;
+                    }
+                }
+
+                // 如果前面的檢查過咗，再睇後面
+                if (isRealNumber && isNextKana) {
+                    // 往後看一個字，如果不是數字 Map 的開始，就當它是普通單詞
+                    const possibleStarting = str.substring(index + m.length, index + m.length + 4);
+                    if (!Object.keys(kanaNumMap).some(k => possibleStarting.startsWith(k))) {
+                        isRealNumber = false;
+                    }
+                }
+
+                if (isRealNumber) {
                     const num = kanaNumMap[m];
                     if (num !== undefined) vals.push(num);
                 }
@@ -395,6 +421,11 @@ STRICT OPERATIONAL RULES:
               String.fromCharCode(s.charCodeAt(0) - 0xfee0)
           ).toLowerCase();
 
+    const toFullWidthUpper = (str) =>
+    str.toUpperCase().replace(/[!-~]/g, s =>
+        String.fromCharCode(s.charCodeAt(0) + 0xfee0)
+    );
+
     function getCleanSourceText(node, dynamicStyles = [], glossaryDict = {}, terms = []) {
         if (!node) return "";
         const temp = node.cloneNode(true);
@@ -415,7 +446,7 @@ STRICT OPERATIONAL RULES:
 
         let text = temp.textContent || "";
         text = toHalfWidth(text);
-        text = convertText(text);
+        //text = convertText(text);
         text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/[♪〜～～⁓~⸺…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
@@ -730,7 +761,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                             aiSpan.style.webkitTextCombine = "none";
                             aiSpan.setAttribute('lang', 'zh');
                             aiSpan.style.fontSize = baseFontSize + "px";
-                            aiSpan.innerText = chunk;
+                            aiSpan.innerText = toFullWidthUpper(chunk);
                             outerSpan.appendChild(aiSpan);
 
                             // 如果還有後續文字，添加換行
@@ -748,7 +779,7 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                         aiSpan.style.webkitTextCombine = "none";
                         aiSpan.setAttribute('lang', 'zh');
                         aiSpan.style.fontSize = baseFontSize + "px";
-                        aiSpan.innerText = translatedText;
+                        aiSpan.innerText = toFullWidthUpper(translatedText);
                         outerSpan.appendChild(aiSpan);
                     }
 
