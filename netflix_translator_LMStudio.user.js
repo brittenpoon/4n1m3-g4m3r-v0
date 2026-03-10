@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.15-LM
+// @version      5.0.16-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -19,23 +19,162 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.15";
+    const SCRIPT_VERSION = "5.0.16";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
 
     const translateToHK = OpenCC.Converter({ from: 'cn', to: 'hk' });
 
-    const nzh = Nzh.hk;
+    const nzhhk = Nzh.hk;
     function convertText(input) {
         if (!input) return "";
         return input.replace(/\d+(\.\d+)?/g, (match) => {
             try {
-                return nzh.encode(match);
+                return `'${nzhhk.encodeS(match)}'`;
             } catch (e) {
                 return match;
             }
         });
+    }
+
+
+    function invalidNumber(translated, text, sourceLangName) {
+        if (sourceLangName !== 'Japanese') return [false, ""];
+
+        // 1. 預處理：去除引號、空格、全形空格，確保數字連貫
+        let cleanText = text.replace(/['\s\u3000]/g, '');
+        let cleanTranslated = translated.replace(/['\s\u3000]/g, '');
+
+        // 2. 排除詞：消除非數值的干擾
+        const exclusions = [
+            "一度", "一貫", "一體", "一体", "一併", "四方", "統一", "万一", "万分", "萬一", "萬分", "一瞬", "三半",
+            "一流", "一番", "一樣", "一致", "一定", "一路", "一起", "一切", "一般", "一下", "一緒", "下一集", "一髪",
+            "一些", "一堆", "一無", "第一次", "一直", "一輛", "一家", "多", "一堂", "一份", "一點", "同樣",
+            "兩者", "一身", "二度", "一無", "一種", "一斉", "一齊", "一氣", "一気", "一旦", "一角", "一邊", "三明治"
+        ];
+        const exclusionRegex = new RegExp(exclusions.join('|'), 'g');
+
+        cleanText = cleanText.replace(exclusionRegex, '');
+        cleanTranslated = cleanTranslated.replace(exclusionRegex, '');
+
+        // 3. 片假名配置
+        const kanaNumMap = {
+            'ゼロ': 0, 'ワン': 1, 'トゥー': 2, 'スリー': 3, 'フォー': 4,
+            'ファイブ': 5, 'シックス': 6, 'セブン': 7, 'エイト': 8, 'ナイン': 9,
+            'イレブン': 11, 'トゥエルブ': 12, 'サーティーン': 13, 'フォーティーン': 14,
+            'フィフティーン': 15, 'シックスティーン': 16, 'セブンティーン': 17,
+            'エィティーン': 18, 'ナインティーン': 19, 'トゥエンティ': 20,
+            'セコンド': 2, 'サード': 3, 'フォース': 4
+        };
+        const kanaRegex = new RegExp(Object.keys(kanaNumMap).join('|'), 'g');
+
+        // 4. 數字解析零件
+        const multiplierMap = { '萬': 10000, '万': 10000, '億': 100000000, '亿': 100000000 };
+        const baseNumsOnly = "零一二三四五六七八九十百千拾佰仟壹貳參肆伍陸柒捌玖";
+        const numRegex = new RegExp(`\\d+(\\.\\d+)?|[${baseNumsOnly}兩]+[點.][${baseNumsOnly}兩]+|[${baseNumsOnly}兩]+`, 'g');
+
+        const extractValues = (str, label) => {
+            if (!str) return [];
+            let vals = [];
+
+            // --- 處理片假名 ---
+            const kanaMatches = str.match(kanaRegex) || [];
+            kanaMatches.forEach(m => {
+                const index = str.indexOf(m);
+                const prevChar = str.charAt(index - 1);
+                const nextChar = str.charAt(index + m.length);
+                const isPartOfLongWord = /[\u30A0-\u30FF]/.test(prevChar) || /[\u30A0-\u30FF]/.test(nextChar);
+
+                if (!isPartOfLongWord) {
+                    const num = kanaNumMap[m];
+                    if (num !== undefined) vals.push(num);
+                }
+            });
+
+            // --- 處理中文/阿拉伯數字 ---
+            let match;
+            numRegex.lastIndex = 0;
+
+            while ((match = numRegex.exec(str)) !== null) {
+                let fullMatch = match[0];
+                let clean = fullMatch.replace(/兩/g, '二');
+
+                if (clean.length === 1 && "十百千拾佰仟".includes(clean)) continue;
+
+                try {
+                    let val;
+                    if (/^\d+(\.\d+)?$/.test(clean)) {
+                        val = parseFloat(clean);
+                    } else if (clean === "百分百") {
+                        val = 100;
+                    } else {
+                        val = nzhhk.decodeS(clean);
+                    }
+
+                    if (val !== null && !isNaN(val)) {
+                        if (val === 0 && !["零", "0", "ゼロ", "0.0"].includes(clean)) continue;
+
+                        const nextCharIndex = match.index + fullMatch.length;
+                        const nextChar = str.charAt(nextCharIndex);
+
+                        if (multiplierMap[nextChar]) {
+                            vals.push(val * multiplierMap[nextChar]);
+                            numRegex.lastIndex++;
+                        } else {
+                            if (clean.length > 1 && /^[一二三四五六七八九]+$/.test(clean)) {
+                                if (label === "Source") {
+                                    const digits = clean.split('').map(d => nzhhk.decodeS(d));
+                                    vals.push(...digits);
+                                } else {
+                                    vals.push(val);
+                                    const digits = clean.split('').map(d => nzhhk.decodeS(d));
+                                    vals.push(...digits);
+                                }
+                            } else {
+                                vals.push(val);
+                            }
+                        } // 這裡補上了 multiplierMap 的 else 閉合
+                    } // 這裡補上了 val !== null 的閉合
+                } catch (e) {}
+            }
+            const result = [...new Set(vals)].filter(v => typeof v === 'number');
+            console.log(`Debug - ${label} Values:`, result);
+            return result;
+        };
+
+        const originalValues = extractValues(cleanText, "Source");
+        const translatedValues = extractValues(cleanTranslated, "Translated");
+
+        // --- 嚴謹比對邏輯 ---
+
+        // 1. Forward Check (原句有，翻譯冇)
+        const missingInTrans = originalValues.filter(sv => {
+            // 特例：如果 sv 是組合數 (10-99)，且翻譯已經有齊拆散嘅數字，就唔算缺失
+            if (sv >= 10 && sv < 100) {
+                const digits = sv.toString().split('').map(Number);
+                if (digits.every(d => translatedValues.includes(d))) return false;
+            }
+            return !translatedValues.includes(sv);
+        });
+        if (originalValues.length > 0 && missingInTrans.length > 0) {
+            return [true, `數字缺失: ${missingInTrans.join(', ')}`];
+        }
+
+        // 2. Reverse Check (翻譯多咗，原句冇)
+        const extraInTrans = translatedValues.filter(tv => {
+            // 特例：如果 tv 是組合數 (10-99)，且原句已經有齊拆散嘅數字，就唔算多出
+            if (tv >= 10 && tv < 100) {
+                const digits = tv.toString().split('').map(Number);
+                if (digits.every(d => originalValues.includes(d))) return false;
+            }
+            return !originalValues.includes(tv);
+        });
+        if (extraInTrans.length > 0) {
+            return [true, `新增了原句沒有的數字: ${extraInTrans.join(', ')}`];
+        }
+
+        return [false, ""];
     }
 
     // --- 核心 API 配置變更 ---
@@ -280,7 +419,8 @@ STRICT OPERATIONAL RULES:
         text = text.replace(/[\r\n]+/g, ' ').replace(/… /g, "").replace(/[♪〜～～⁓~⸺…]+/g, '').replace(/\s+/g, ' ').trim();
         if (terms.length > 0) {
             terms.forEach(term => {
-                const fuzzyPattern = term.split('').join('ー*') + 'ー*';
+                const normalisedTerm = term.replace(/ー+$/, '');
+                const fuzzyPattern = normalisedTerm.split('').join('ー*') + 'ー*';
                 const regex = new RegExp(fuzzyPattern, 'g');
                 text = text.replace(regex, glossaryDict[term]);
             });
@@ -388,38 +528,26 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
             let success = false;
             let lastResult = "";
 
-            const invalidLanguagePatterns = [
-                /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/, // Korean
-                /[\u0400-\u04FF]/,                         // Cyrillic (Russian, etc.)
-                /[\u0600-\u06FF\u0750-\u077F]/,             // Arabic
-                /[\u0900-\u0D7F]/,                         // South Asian (Hindi, etc. 包括 "दरअसल")
-                /[\u0E00-\u0E7F]/                          // Thai (加多個泰文保險)
-            ];
-            //const containsSimplified = (t) => /[体国说义术龙显层现划标选证级节务确质联认议导压应态产发们会负责守护请伦兰兴]/.test(t);
+            const checkForeignLanguage = (translated) => {
+                const patterns = [
+                    { name: "韓文", regex: /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/ },
+                    { name: "西里爾文", regex: /[\u0400-\u04FF]/ },
+                    { name: "阿拉伯文", regex: /[\u0600-\u06FF\u0750-\u077F]/ },
+                    { name: "南亞文字", regex: /[\u0900-\u0D7F]/ },
+                    { name: "泰文", regex: /[\u0E00-\u0E7F]/ }
+                ];
+                for (const p of patterns) {
+                    if (p.regex.test(translated)) return [true, `偵測到${p.name}`];
+                }
+                return [false, ""];
+            };
 
             function isAIGeneratedRefusal(text) {
-                if (!text || text.length < 10) return false;
-
-                // 這些是 AI 拒絕翻譯時最常出現的詞彙
-                const refusalKeywords = [
-                    "對不起", "翻譯", "日語", "日文", "文字", "對應", "繁體", "當然", "按照", "要求", "完全", "不加", "修飾", "方式",
-                    "詞語", "內容", "不適宜", "無法", "包含", "隨時", "內容",
-                    "露骨", "提供", "轉述", "指令", "規則", "詢問"
-                ];
-
-                // 計算這段文字中了多少個關鍵字
-                let matchCount = 0;
-                refusalKeywords.forEach(word => {
-                    if (text.includes(word)) {
-                        matchCount++;
-                    }
-                });
-
-                // 設定門檻：如果中了 3 個或以上，就判定為拒絕
-                const isRefusal = matchCount >= 3;
-
-                // 額外保險：AI 的拒絕通常比較長
-                return isRefusal && text.length > 12;
+                if (!text || text.length < 10) return [false, ""];
+                const refusalKeywords = ["對不起", "翻譯", "日語", "日文", "文字", "對應", "繁體", "當然", "按照", "要求", "完全", "不加", "修飾", "方式", "詞語", "內容", "不適宜", "無法", "包含", "隨時", "內容", "露骨", "提供", "轉述", "指令", "規則", "詢問"];
+                let matchCount = refusalKeywords.filter(word => text.includes(word)).length;
+                const isRefusal = matchCount >= 3 && text.length > 12;
+                return [isRefusal, isRefusal ? `命中 ${matchCount} 個拒絕關鍵字` : ""];
             }
 
             while (retryCount <= maxRetries && !success) {
@@ -452,86 +580,78 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
 
                                 const hasNewEnglish = (translated, text) => {
                                     const translatedWords = translated.match(/[a-zA-Z\uff21-\uff3a\uff41-\uff5a]{2,}/g) || [];
-                                    return translatedWords.some(word => {
+                                    const normalizedSource = toHalfWidth(text);
+                                    const newWords = translatedWords.filter(word => {
                                         const normalizedWord = toHalfWidth(word);
-                                        return !text.includes(normalizedWord);
+                                        return !normalizedSource.includes(normalizedWord);
                                     });
+                                    const hasError = newWords.length > 0;
+                                    return [hasError, hasError ? `新增英文: ${newWords.join(', ')}` : ""];
                                 };
 
                                 const invalidJapaneseKana = (translated, text) => {
-                                    // 1. Define bracket pairs (Standard, Full-width, Square, Curly)
                                     const brackets = /[\(\)\[\]\{\}\uff08\uff09\u3010\u3011\u300c\u300d]/g;
                                     const separators = /[:\uff1a\s]/g;
                                     const kanaPattern = /[\u3040-\u309F\u30A0-\u30FF]/;
                                     const bracketContentRegex = /[\(\uff08\u300c\u3010\[][^\(\)\uff08\uff09\u300c\u300d\u3010\u3011\[\]]+[\)\uff09\u300d\u3011\]]/g;
+
                                     const sourceMatches = text.match(bracketContentRegex) || [];
-                                    if (sourceMatches.length === 0) {
-                                        // Just check if the translation contains any Japanese Kana at all
-                                        return kanaPattern.test(translated);
-                                    }
-                                    const allowedPhrases = sourceMatches.map(m => m.replace(brackets, ''));
                                     let cleanedTranslated = translated;
-                                    allowedPhrases.forEach(phrase => {
-                                        cleanedTranslated = cleanedTranslated.split(phrase).join('');
-                                    });
 
-                                    // Remove structural symbols so they don't count as "content"
+                                    if (sourceMatches.length > 0) {
+                                        const allowedPhrases = sourceMatches.map(m => m.replace(brackets, ''));
+                                        allowedPhrases.forEach(phrase => {
+                                            cleanedTranslated = cleanedTranslated.split(phrase).join('');
+                                        });
+                                    }
                                     cleanedTranslated = cleanedTranslated.replace(brackets, '').replace(separators, '');
-
-                                    // Check if any Kana remains outside the "protected" bracket content
-                                    return kanaPattern.test(cleanedTranslated)
+                                    const hasKana = kanaPattern.test(cleanedTranslated);
+                                    return [hasKana, hasKana ? "殘留日文假名" : ""];
                                 };
 
                                 const isUnreasonablyLong = (translated, text, sourceLangName) => {
-                                    if (sourceLangName !== 'Japanese') return false;
-
+                                    if (sourceLangName !== 'Japanese') return [false, ""];
                                     const sourceLen = text.replace(/\s/g, '').length;
                                     const transLen = translated.replace(/\s/g, '').length;
-
                                     const MAX_RATIO = 1.55;
-
-                                    if (sourceLen > 0 && transLen > (sourceLen * MAX_RATIO + 5)) {
-                                        return true; // Too long!
-                                    }
-
                                     const MIN_RATIO = 0.3;
-                                    if (sourceLen > 10 && (transLen / sourceLen) < MIN_RATIO) {
-                                        return true; // Too short!
-                                    }
 
-                                    return false;
+                                    if (sourceLen > 0 && transLen > (sourceLen * MAX_RATIO + 5)) return [true, `比例過長 (${transLen}/${sourceLen})`];
+                                    if (sourceLen > 10 && (transLen / sourceLen) < MIN_RATIO) return [true, `比例過短 (${transLen}/${sourceLen})`];
+                                    return [false, ""];
                                 };
 
                                 const hasInvalidNewlines = (translated) => {
-                                    // 1. If there are no newlines at all, it's fine
-                                    if (!translated.includes('\n')) return false;
-
-                                    // 2. Check for "Internal" newlines or multiple "Trailing" newlines
-                                    // This regex looks for:
-                                    // - Any \n followed by another \n (double newlines)
-                                    // - Any \n followed by more text (internal newline)
-                                    const invalidNewlinePattern = /\n(.|\n)/;
-
-                                    if (invalidNewlinePattern.test(translated)) {
-                                        return true; // Found a newline that isn't the single final character
-                                    }
-
-                                    // 3. One more check: If the ONLY newline is NOT at the very end
-                                    if (translated.indexOf('\n') !== translated.length - 1) {
-                                        return true;
-                                    }
-
-                                    return false; // Only one \n exists and it's at the end
+                                    if (!translated.includes('\n')) return [false, ""];
+                                    const invalid = (/\n(.|\n)/.test(translated)) || (translated.indexOf('\n') !== translated.length - 1);
+                                    return [invalid, invalid ? "包含非法換行" : ""];
                                 };
 
-
-                                let isForeignLanguage = invalidLanguagePatterns.some(pattern => pattern.test(translated)) || hasNewEnglish(translated, text) || invalidJapaneseKana(translated, text);
                                 //let wrongLanguage = isForeignLanguage || containsSimplified(translated);
+                                const errorChecks = [
+                                    { id: "AI拒絕回應", run: () => isAIGeneratedRefusal(translated) },
+                                    { id: "外語偵測", run: () => checkForeignLanguage(translated) },
+                                    { id: "新增英文", run: () => hasNewEnglish(translated, text) },
+                                    { id: "日文殘留", run: () => invalidJapaneseKana(translated, text) },
+                                    { id: "長度異常", run: () => isUnreasonablyLong(translated, text, db.sourceLangName) },
+                                    { id: "換行錯誤", run: () => hasInvalidNewlines(translated) },
+                                    { id: "數字錯誤", run: () => invalidNumber(translated, text, db.sourceLangName) }
+                                ];
 
-                                if ((isAIGeneratedRefusal(translated) || isForeignLanguage || isUnreasonablyLong(translated, text, db.sourceLangName) || hasInvalidNewlines(translated)) && retryCount < maxRetries) {
-                                    console.warn(`[${getTimestamp()}] 語言錯誤，正在重試 (${retryCount + 1}/${maxRetries})... 內容: ${translated}`);
+                                let failedReason = "";
+                                const hasError = errorChecks.some(item => {
+                                    const [isInvalid, reason] = item.run();
+                                    if (isInvalid) {
+                                        failedReason = `${item.id} (${reason})`;
+                                        return true;
+                                    }
+                                    return false;
+                                });
+
+                                if (hasError && retryCount < maxRetries) {
+                                    console.warn(`[${getTimestamp()}] 重試原因: [${failedReason}]，正在進行第 ${retryCount + 1}/${maxRetries} 次重試... 內容: ${translated}`);
                                     retryCount++;
-                                    resolve(); // 結束 Promise 但 success 仍為 false，會觸發 while 再次執行
+                                    resolve();
                                     return;
                                 }
 
