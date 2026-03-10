@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.17-LM
+// @version      5.0.18-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.17";
+    const SCRIPT_VERSION = "5.0.18";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -38,8 +38,208 @@
         });
     }
 
+/**
+ * 檢查翻譯後的中文數字與原文日文數字是否一致
+ * @param {string} translated - 翻譯後的文本
+ * @param {string} text - 日文原文
+ * @param {string} sourceLangName - 原文語言名稱
+ */
+function invalidNumber(translated, text, sourceLangName) {
+    if (sourceLangName !== 'Japanese') return [false, ""];
 
-    function invalidNumber(translated, text, sourceLangName) {
+    let originalNumbersSet = new Set();
+
+    // 1. 提取原文中的阿拉伯數字 (支援標準小數點 '.' 以及日文中點 '･', '・' 作為小數點)
+    const numRegex = /(?:\d{1,3}(?:,\d{3})+|\d+)(?:[.\uFF65\u30FB]\d+)?/g;
+    const originalMatches = text.match(numRegex) || [];
+    originalMatches.forEach(num => {
+        // 先將逗號移除，再將日文中點轉換為標準小數點，然後再 parseFloat
+        originalNumbersSet.add(parseFloat(num.replace(/,/g, '').replace(/[･・]/g, '.')));
+    });
+
+    // 2. 處理日文關連單位 (百千万億兆)
+    const jpUnitMap = {
+        '百': 100,
+        '千': 1000,
+        '万': 10000,
+        '億': 100000000,
+        '兆': 1000000000000
+    };
+
+    let compounds = [];
+    // 同步更新 compoundRegex 支援日文中點小數點
+    const compoundRegex = /((?:\d{1,3}(?:,\d{3})+|\d+)(?:[.\uFF65\u30FB]\d+)?)\s*([百千万億兆])/g;
+    let cMatch;
+    while ((cMatch = compoundRegex.exec(text)) !== null) {
+        const num = parseFloat(cMatch[1].replace(/,/g, '').replace(/[･・]/g, '.'));
+        const unit = jpUnitMap[cMatch[2]];
+        compounds.push({ num, unit, total: num * unit });
+
+        originalNumbersSet.add(unit);
+    }
+
+    // 3. 處理獨立的片假名數字
+    const kanaNumMap = {
+        'ゼロ': 0, 'ワン': 1, 'トゥー': 2, 'ツー' :2, 'スリー': 3, 'フォー': 4,
+        'ファイブ': 5, 'シックス': 6, 'セブン': 7, 'エイト': 8, 'ナイン': 9,
+        'テン': 10,
+        'イレブン': 11, 'トゥエルブ': 12, 'サーティーン': 13, 'フォーティーン': 14,
+        'フィフティーン': 15, 'シックスティーン': 16, 'セブンティーン': 17,
+        'エィティーン': 18, 'ナインティーン': 19, 'トゥエンティ': 20,
+        'セコンド': 2, 'サード': 3, 'フォース': 4
+    };
+
+    const jpChars = '\\u3040-\\u309F\\u30A0-\\u30FF';
+    const allowedHiragana = 'とはがをにへでやのもかねよならしばすぜぞわくまださて';
+    const kanaKeys = Object.keys(kanaNumMap).sort((a, b) => b.length - a.length).join('|');
+
+    const lookbehind = `(?<!(?![${allowedHiragana}])[${jpChars}])`;
+    const lookahead = `(?!(?![${allowedHiragana}])[${jpChars}])`;
+    const kanaRegex = new RegExp(`${lookbehind}(${kanaKeys})${lookahead}`, 'g');
+
+    const kanaMatches = text.match(kanaRegex) || [];
+    kanaMatches.forEach(match => {
+        originalNumbersSet.add(kanaNumMap[match]);
+    });
+
+    const originalNumbers = [...originalNumbersSet];
+
+    // 4. 處理譯文中的數字
+    let translatedNumbersSet = new Set();
+
+    const transArbicMatches = translated.match(numRegex) || [];
+    transArbicMatches.forEach(num => {
+        translatedNumbersSet.add(parseFloat(num.replace(/,/g, '').replace(/[･・]/g, '.')));
+    });
+
+    // B. 處理中文數字常用字排除邏輯
+    let exclusions = ["零", "一", "兩", "二", "三", "四", "八", "十", "百", "千", "萬", "點"];
+
+    const hasDigit = (digit) => originalNumbers.some(num => num.toString().includes(digit));
+
+    if (hasDigit('0')) exclusions = exclusions.filter(c => c !== "零");
+    if (hasDigit('1')) exclusions = exclusions.filter(c => c !== "一");
+    if (hasDigit('2')) exclusions = exclusions.filter(c => c !== "二" && c !== "兩");
+    if (hasDigit('3')) exclusions = exclusions.filter(c => c !== "三");
+    if (hasDigit('4')) exclusions = exclusions.filter(c => c !== "四");
+    if (hasDigit('8')) exclusions = exclusions.filter(c => c !== "八");
+
+    const hasNumGte10 = originalNumbers.some(num => num >= 10);
+    if (hasNumGte10) exclusions = exclusions.filter(c => c !== "十");
+
+    if (originalNumbersSet.has(100)) exclusions = exclusions.filter(c => c !== "百");
+    if (originalNumbersSet.has(1000)) exclusions = exclusions.filter(c => c !== "千");
+    if (originalNumbersSet.has(10000)) exclusions = exclusions.filter(c => c !== "萬");
+
+    // 檢查原文是否包含小數點 (包含標準點及日文中點)
+    const hasDecimal = originalMatches.some(match => /[.\uFF65\u30FB]/.test(match));
+    if (hasDecimal) exclusions = exclusions.filter(c => c !== "點");
+
+    let processedTranslated = translated;
+    if (exclusions.length > 0) {
+        const excludeRegex = new RegExp(`[${exclusions.join('')}]`, 'g');
+        processedTranslated = processedTranslated.replace(excludeRegex, '');
+    }
+
+    // C. 提取譯文中的中文數字並轉換
+    const chineseNumPattern = /[零一兩二三四五六七八九十百千萬億點]+/g;
+    const chineseMatches = processedTranslated.match(chineseNumPattern) || [];
+
+    chineseMatches.forEach(chineseStr => {
+        try {
+            const normalizedStr = chineseStr.replace(/兩/g, '二');
+            const decodedS = nzhhk.decodeS(normalizedStr);
+
+            if (typeof decodedS === 'number' && !isNaN(decodedS)) {
+                translatedNumbersSet.add(decodedS);
+            }
+        } catch (e) {
+            // 轉換失敗跳過
+        }
+    });
+
+    if (originalNumbersSet.has(1000000000000) && translated.includes('兆')) {
+        translatedNumbersSet.add(1000000000000);
+    }
+
+    const translatedNumbers = [...translatedNumbersSet];
+
+    if (originalNumbers.length === 0 && translatedNumbers.length === 0) {
+        return [false, ""];
+    }
+
+    // 5. 雙向對比差異
+    let missingInTrans = originalNumbers.filter(num => !translatedNumbers.includes(num));
+    let extraInTrans = translatedNumbers.filter(num => !originalNumbers.includes(num));
+
+    // A. 處理乘積合併邏輯
+    compounds.forEach(comp => {
+        if (extraInTrans.includes(comp.total) &&
+            missingInTrans.includes(comp.num) &&
+            missingInTrans.includes(comp.unit)) {
+
+            extraInTrans = extraInTrans.filter(x => x !== comp.total);
+            missingInTrans = missingInTrans.filter(x => x !== comp.num && x !== comp.unit);
+        }
+    });
+
+    // B. 處理連字情況 (例如 "二一" 被解析為 21)
+    let extraToKeep = [];
+    extraInTrans.forEach(extra => {
+        const extraStr = extra.toString();
+        if (Number.isInteger(extra) && extra >= 10) {
+            let canBeSplit = true;
+            let digitsToRemove = [];
+
+            for (let char of extraStr) {
+                const digit = parseInt(char);
+                if (missingInTrans.includes(digit)) {
+                    digitsToRemove.push(digit);
+                } else {
+                    canBeSplit = false;
+                    break;
+                }
+            }
+
+            if (canBeSplit) {
+                digitsToRemove.forEach(d => {
+                    const mIdx = missingInTrans.indexOf(d);
+                    if (mIdx !== -1) missingInTrans.splice(mIdx, 1);
+                });
+            } else {
+                extraToKeep.push(extra);
+            }
+        } else {
+            extraToKeep.push(extra);
+        }
+    });
+    extraInTrans = extraToKeep;
+
+    // 6. 印出結果便於 Debug
+    if (originalNumbers.length > 0 || translatedNumbers.length > 0) {
+        console.log("originalNumbers: ", originalNumbers, "; translatedNumbers: ", translatedNumbers);
+    }
+
+    // 7. 回傳錯誤訊息
+    let errorMessages = [];
+
+    if (missingInTrans.length > 0) {
+        errorMessages.push(`數字缺失: ${missingInTrans.join(', ')}`);
+    }
+
+    if (extraInTrans.length > 0) {
+        errorMessages.push(`新增了原句沒有的數字: ${extraInTrans.join(', ')}`);
+    }
+
+    if (errorMessages.length > 0) {
+        return [true, errorMessages.join('；')];
+    }
+
+    return [false, ""];
+}
+
+
+/*    function invalidNumber(translated, text, sourceLangName) {
         if (sourceLangName !== 'Japanese') return [false, ""];
 
         // 1. 預處理：去除引號、空格、全形空格，確保數字連貫
@@ -61,7 +261,7 @@
         // 3. 片假名配置
         const kanaNumMap = {
             'ゼロ': 0, 'ワン': 1, 'トゥー': 2, 'ツー' :2, 'スリー': 3, 'フォー': 4,
-            'ファイブ': 5, 'シックス': 6, 'セブン': 7, 'エイト': 8, 'ナイン': 9,
+            'ファイブ': 5, 'シックス': 6, 'セブン': 7, 'エイト': 8, 'ナイン': 9, 'テン': 10,
             'イレブン': 11, 'トゥエルブ': 12, 'サーティーン': 13, 'フォーティーン': 14,
             'フィフティーン': 15, 'シックスティーン': 16, 'セブンティーン': 17,
             'エィティーン': 18, 'ナインティーン': 19, 'トゥエンティ': 20,
@@ -202,6 +402,8 @@
 
         return [false, ""];
     }
+*/
+
 
     // --- 核心 API 配置變更 ---
     // LM Studio 預設連接埠為 1234
