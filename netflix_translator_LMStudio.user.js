@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.18-LM
+// @version      5.0.20-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.18";
+    const SCRIPT_VERSION = "5.0.20";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -238,6 +238,41 @@ function invalidNumber(translated, text, sourceLangName) {
     return [false, ""];
 }
 
+function cleanPronoun(translated, text, sourceLangName) {
+    if (sourceLangName !== 'Japanese') return translated;
+
+    const original = translated;
+    let cleaned = translated;
+
+    const pronounMap = {
+        '我們': ['我們', 'たち', '達', 'ら', '等', '我々', 'われわれ'],
+        '你們': ['たち', '達', 'ら', '等', '君ら', 'お前ら', '貴方様方'],
+        '他們': ['彼ら', '彼達', '彼女ら', '彼女達'],
+        '我': ['私', 'わたし', 'わたくし', '僕', 'ぼく', '俺', 'おれ', '自分', 'あたし', 'うち', '吾輩', '拙者'],
+        '你': ['あなた', '貴方', '君', 'きみ', 'お前', 'おまえ', 'あんた', '貴様'],
+        '他': ['彼', 'かれ'],
+        '她': ['彼女', 'かのじょ']
+    };
+
+    for (const [zh, jpKeywords] of Object.entries(pronounMap)) {
+        const hasOriginal = jpKeywords.some(keyword => text.includes(keyword));
+
+        if (cleaned.includes(zh) && !hasOriginal) {
+            // Regex 更新：在匹配組中加入了 「 和 『
+            // (^|[，。！？、而且但所以甚至並已「『])
+            const regex = new RegExp(`(^|[，。！？、而且但所以甚至並已「『])(${zh})(的)?`, 'g');
+            cleaned = cleaned.replace(regex, '$1');
+        }
+    }
+
+    if (cleaned !== original) {
+        // 額外修復：處理刪除後可能出現的「「的」、「，的」等殘留（雙重保險）
+        cleaned = cleaned.replace(/([，。！？、「『])的/g, '$1');
+        console.warn(`[主語清洗] 變動：\n  ↳ 日文: "${text}"\n  ↳ 原始: "${original}"\n  ↳ 清除: "${cleaned}"`);
+    }
+
+    return cleaned;
+}
 
 /*    function invalidNumber(translated, text, sourceLangName) {
         if (sourceLangName !== 'Japanese') return [false, ""];
@@ -805,10 +840,11 @@ Please translate the following ${db.sourceLangName} text into ${db.targetLangNam
                             try {
                                 const json = JSON.parse(res.responseText);
                                 const rawtranslated = json.choices[0].message.content.trim().replace(/^"|"$/g, '');
-                                const translated = translateToHK(rawtranslated);
+                                let translated = translateToHK(rawtranslated);
                                 if (translated !== rawtranslated) {
                                     console.log(rawtranslated, ` ➔ translateToHK ➔ `, translated);
                                 }
+                                translated = cleanPronoun(translated, text, db.sourceLangName);
                                 lastResult = translated;
 
                                 const hasNewEnglish = (translated, text) => {
