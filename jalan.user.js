@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      2.8
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -357,47 +357,76 @@
     }
 
     // --- Page F 專屬邏輯 ---
-    function handleCouponBulkPage() {
-        console.log(`[${TAB_ID}] Advanced Collector active...`);
+function handleCouponBulkPage() {
+    console.log(`[${TAB_ID}] Advanced Collector active...`);
 
-        const scanData = () => {
-            let ids = [];
-            let startTime = null;
+    const scanData = () => {
+        let ids = [];
+        let startTime = null;
 
-            // --- Layout 1: theme/coupon/general (Page F) ---
-            const generalIds = Array.from(document.querySelectorAll('input.js-disCouponId')).map(i => i.value);
-            if (generalIds.length > 0) ids = generalIds;
+        // --- Layout 1: theme/coupon/general (Page F) ---
+        const generalIds = Array.from(document.querySelectorAll('input.js-disCouponId')).map(i => i.value);
+        if (generalIds.length > 0) ids = generalIds;
 
-            // --- Layout 2: discountCoupon/CAM... (CAM Page) ---
-            if (ids.length === 0) {
-                const camLinks = document.querySelectorAll('a[href^="javascript:doGetCoupon"]');
-                camLinks.forEach(link => {
-                    const match = link.href.match(/'([^']+)'/);
-                    if (match) ids.push(match[1]);
-                });
-                // 提取 CAM 頁面時間
-                const td = Array.from(document.querySelectorAll('td')).find(el => el.innerText.includes('配布期間'));
-                if (td && td.nextElementSibling) {
-                    startTime = parseJalanDateString(td.nextElementSibling.innerText.split('～')[0]);
+        // --- Layout 2: discountCoupon/CAM... (CAM Page) ---
+        if (ids.length === 0) {
+            const camLinks = document.querySelectorAll('a[href^="javascript:doGetCoupon"]');
+            camLinks.forEach(link => {
+                const match = link.href.match(/'([^']+)'/);
+                if (match) ids.push(match[1]);
+            });
+            const td = Array.from(document.querySelectorAll('td')).find(el => el.innerText.includes('配布期間'));
+            if (td && td.nextElementSibling) {
+                startTime = parseJalanDateString(td.nextElementSibling.innerText.split('～')[0]);
+            }
+        }
+
+        // --- Layout 3: theme/coupon/kikaku (Kikaku Page) ---
+        if (ids.length === 0) {
+            const kikakuIds = Array.from(document.querySelectorAll('.js-disCouponId')).map(i => i.value);
+            if (kikakuIds.length > 0) ids = kikakuIds;
+        }
+
+        // --- Layout 4: Hotel Specific Coupon Page (Moved inside the logic flow) ---
+        if (ids.length === 0 && currentUrl.includes("/yad") && currentUrl.includes("/coupon/")) {
+            const hotelCouponItems = document.querySelectorAll('.cassetteList-list .item');
+            hotelCouponItems.forEach(item => {
+                const link = item.querySelector('.item-title a, .item-btnArea a');
+                if (link) {
+                    const idMatch = link.href.match(/discountCouponId=(COU\d+)/);
+                    if (idMatch) {
+                        const id = idMatch[1];
+                        ids.push(id); // Push to the main 'ids' array
+
+                        // Extract startTime if not already set (uses the first one found)
+                        if (!startTime) {
+                            const detailTexts = item.querySelectorAll('.item-detail');
+                            detailTexts.forEach(detail => {
+                                if (detail.querySelector('dt')?.innerText.includes('配布期間')) {
+                                    const timeStr = detail.querySelector('dd')?.innerText.split('～')[0];
+                                    startTime = parseJalanDateString(timeStr);
+                                }
+                            });
+                        }
+                    }
                 }
-            }
+            });
+        }
 
-            // --- Layout 3: theme/coupon/kikaku (Kikaku Page) ---
-            if (ids.length === 0) {
-                const kikakuIds = Array.from(document.querySelectorAll('.js-disCouponId')).map(i => i.value);
-                if (kikakuIds.length > 0) ids = kikakuIds;
-            }
+        // Final Check and UI Update
+        if (ids.length > 0) {
+            // Deduplicate IDs just in case
+            const uniqueIds = [...new Set(ids)];
+            console.log(`[${TAB_ID}] Detected IDs:`, uniqueIds);
+            updateBulkButtonInPanel(uniqueIds, startTime);
+        } else {
+            // Retry scanning if nothing found yet
+            setTimeout(scanData, 1500);
+        }
+    };
 
-            if (ids.length > 0) {
-                console.log(`[${TAB_ID}] Detected IDs:`, ids);
-                updateBulkButtonInPanel(ids, startTime);
-            } else {
-                setTimeout(scanData, 1500);
-            }
-        };
-
-        scanData();
-    }
+    scanData();
+}
 
     // 輔助：解析 "2025年5月20日(火)10:00" 格式
     function parseJalanDateString(str) {
@@ -917,7 +946,7 @@ async function executeSuperBulkGet(ids) {
         }
 
         // --- Page F: Coupon General Bulk Collector ---
-        if (currentUrl.includes("theme/coupon/") || currentUrl.includes("discountCoupon/")) {
+        if (currentUrl.includes("theme/coupon/") || currentUrl.includes("discountCoupon/") || (currentUrl.includes("/yad") && currentUrl.includes("/coupon/"))) {
             handleCouponBulkPage();
         }
 
