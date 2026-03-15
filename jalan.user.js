@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -444,29 +444,28 @@
         }
     }
     // 執行一鍵領取 API
-    async function executeSuperBulkGet(ids) {
+async function executeSuperBulkGet(ids) {
         const apiKey = "ari190d9149699";
         const SYSTEM_RETRY_CODES = ['F_MAS5033', 'W_MRS0003', 'BUSY'];
+        const INVALID_ID_CODE = "W_MUW7961"; // Code for "Invalid Coupon ID at index X"
         const MAX_BATCH_SIZE = 20;
 
         // 1. Chunk IDs into groups of 20
-        const batches = [];
+        let batches = [];
         for (let i = 0; i < ids.length; i += MAX_BATCH_SIZE) {
             batches.push(ids.slice(i, i + MAX_BATCH_SIZE));
         }
 
         logEvent("BULK START", `Processing ${ids.length} coupons in ${batches.length} batches...`, "info");
 
-        // 2. Loop through each batch sequentially
         for (let i = 0; i < batches.length; i++) {
-            const currentBatch = batches[i];
+            let currentBatch = batches[i]; // Use 'let' because we might modify it
             let batchSuccess = false;
             let retryCount = 0;
             const maxRetries = 10;
 
-            logEvent("BATCH", `Starting Batch ${i + 1}/${batches.length} (${currentBatch.length} IDs)...`, "info");
+            logEvent("BATCH", `Batch ${i + 1}/${batches.length} (Size: ${currentBatch.length})...`, "info");
 
-            // 3. Keep trying this specific batch until success or max retries reached
             while (!batchSuccess && retryCount < maxRetries) {
                 try {
                     const requestData = {
@@ -482,55 +481,60 @@
                     });
                     const data = await response.json();
 
-                    // Parse individual coupon results
+                    // --- A. Handle Specific Poison Pill Error (Invalid ID) ---
+                    if (data.result === "1" && data.errors?.[0]?.code === INVALID_ID_CODE) {
+                        const errorMsg = data.errors[0].message;
+                        // Extract the number from "11番目の割引クーポンID..."
+                        const match = errorMsg.match(/(\d+)番目/);
+                        if (match) {
+                            const errorIndex = parseInt(match[1]) - 1; // Convert 1-based to 0-based
+                            const badId = currentBatch[errorIndex];
+
+                            logEvent("CLEANING", `Removing invalid ID: ${badId} at pos ${match[1]}`, "error");
+
+                            // Remove the bad ID and immediately retry the loop with the smaller batch
+                            currentBatch.splice(errorIndex, 1);
+                            if (currentBatch.length === 0) break; // Batch is now empty
+                            continue;
+                        }
+                    }
+
+                    // --- B. Handle General System Busy Errors ---
+                    if (data.result !== "0") {
+                        const errorCode = data.errors?.[0]?.code || "UNKNOWN";
+                        retryCount++;
+                        const delay = errorCode === 'F_MAS5033' ? 5000 : 2000;
+
+                        logEvent("SYS BUSY", `Batch ${i+1} Err: ${errorCode}. Retry ${retryCount}/${maxRetries} in ${delay/1000}s`, "warn");
+                        await new Promise(res => setTimeout(res, delay));
+                        continue;
+                    }
+
+                    // --- C. Parse Successful Coupon Results ---
                     if (data.couponInfo) {
                         data.couponInfo.forEach(info => {
                             const id = info.discountCouponId;
                             const resCode = info.couponResult;
-                            let msg = (info.couponResultMessage || "Success")
-                                        .replace(/#lt;br#gt;/g, ' ')
-                                        .replace(/<br>/g, ' ')
-                                        .replace(/※/g, '');
+                            let msg = (info.couponResultMessage || "").replace(/#lt;br#gt;|<br>|※/g, ' ').trim();
 
                             if (resCode === "0") logEvent("SUCCESS", `[${id}] Obtained`, "success");
                             else if (resCode === "1") logEvent("INFO", `[${id}] Already owned`, "warn");
-                            else if (resCode === "5") logEvent("SOLD OUT", `[${id}] Finished`, "error");
+                            else if (resCode === "5") logEvent("ERROR", `[${id}] Finished`, "error");
                             else logEvent("FAIL", `[${id}] ${msg}`, "error");
                         });
                     }
 
-                    // Check for System Errors (Access Block/Traffic)
-                    if (data.result !== "0") {
-                        const errorCode = data.errors?.[0]?.code || "UNKNOWN";
-                        if (SYSTEM_RETRY_CODES.includes(errorCode)) {
-                            retryCount++;
-                            const delay = errorCode === 'F_MAS5033' ? 5000 : 2000;
-                            logEvent("SYS BUSY", `Batch ${i + 1} failed (${errorCode}). Retry ${retryCount}/${maxRetries} in ${delay/1000}s...`, "warn");
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                            continue; // Restart the 'while' loop for the same batch
-                        } else {
-                            logEvent("FATAL", `Batch ${i + 1} aborted: ${errorCode}`, "error");
-                            break; // Stop retrying this batch
-                        }
-                    }
-
-                    // If we reach here, the batch was processed successfully
                     batchSuccess = true;
 
                 } catch (err) {
                     retryCount++;
-                    logEvent("NET ERROR", `Request failed. Retry ${retryCount}/3 in 3s...`, "error");
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                    if (retryCount >= 3) break;
+                    logEvent("NET ERROR", `Attempt ${retryCount} failed. Waiting 5s...`, "error");
+                    await new Promise(res => setTimeout(res, 5000));
                 }
             }
 
-            // Short pause between DIFFERENT batches to prevent triggering security
-            if (i < batches.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
+            if (i < batches.length - 1) await new Promise(res => setTimeout(res, 1000));
         }
-
         logEvent("FINISH", "All batches processed.", "success");
     }
 
