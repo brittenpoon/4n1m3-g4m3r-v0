@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.6
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -519,7 +519,6 @@ async function executeSuperBulkGet(ids) {
 
                             if (resCode === "0") logEvent("SUCCESS", `[${id}] Obtained`, "success");
                             else if (resCode === "1") logEvent("INFO", `[${id}] Already owned`, "warn");
-                            else if (resCode === "5") logEvent("ERROR", `[${id}] Finished`, "error");
                             else logEvent("FAIL", `[${id}] ${msg}`, "error");
                         });
                     }
