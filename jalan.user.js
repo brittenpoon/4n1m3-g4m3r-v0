@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -559,11 +559,19 @@ async function executeSuperBulkGet(ids) {
                     if (data.couponList) {
                         data.couponList.forEach(item => {
                             if (item.couponID && item.couponID.trim() !== "") {
-                                if (!masterMap.has(item.couponID)) {
-                                    masterMap.set(item.couponID, {
-                                        id: item.couponID,
+                                // --- ID Normalization Start ---
+                                // Convert 'CCOU...' or other variations to standard 'COU...'
+                                // This uses regex to find 'COU' and everything following it.
+                                const normalizedMatch = item.couponID.match(/COU\d+/);
+                                const finalId = normalizedMatch ? normalizedMatch[0] : item.couponID;
+                                // --- ID Normalization End ---
+
+                                if (!masterMap.has(finalId)) {
+                                    masterMap.set(finalId, {
+                                        id: finalId,
                                         name: item.couponName,
-                                        source: path.split('/').pop()
+                                        source: path.split('/').pop(),
+                                        originalId: item.couponID !== finalId ? item.couponID : null // Tracking for debug
                                     });
                                 }
                             }
