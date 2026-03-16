@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Netflix AI 字幕 (LM Studio 版)
-// @version      5.0.20-LM
+// @version      5.0.21-LM
 // @description  還原 v4.38.0 完整邏輯與 Observer，並強化 Rule 5 嚴禁輸出任何警告、隱私提示或廢話。
 // @author       Gemini
 // @match        https://www.netflix.com/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = "5.0.20";
+    const SCRIPT_VERSION = "5.0.21";
     //const HYBRID_MODEL_NAME = "netflix-gemma-hybrid";
     let currentAbortController = null;
     let modelBuildPromise = null;
@@ -239,19 +239,13 @@ function invalidNumber(translated, text, sourceLangName) {
 }
 
 
-/**
- * 清除日翻中過程中無中生有的主語 (最終專業版)
- * 解決：人名後綴誤判 (e.g., 鈴木君)、腦補動詞、多性別代詞、對白引號
- */
 function cleanPronoun(translated, text, sourceLangName) {
     if (sourceLangName !== 'Japanese') return translated;
 
     const original = translated;
     let cleaned = translated;
 
-    // 1. 【核心優化】建立「脫水版」日文原文，排除人名後綴
-    // 匹配：[漢字/假名] + [君/さん/様/ちゃん/殿/さん/くん/さま]
-    // 咁樣「スズキ君」會被過濾，確保唔會將後綴誤認為代名詞「你」
+    // 1. 脫水版日文原文，排除人名後綴
     const textForCheck = text.replace(/[一-龠々ァ-ヶぁ-ん]+\s*(君|さん|様|ちゃん|殿|くん|さま)/g, '');
 
     // 2. 定義代名詞對應表
@@ -273,23 +267,46 @@ function cleanPronoun(translated, text, sourceLangName) {
         '它': ['它', 'それ', 'あれ', 'あいつ']
     };
 
-    // 3. 建立正則表達式環境
-    // prefix 加入咗「，」同埋「喂」等常見引導
-    const prefix = `(^|[，。！？、而且但所以甚至並已「『)）也希望和跟與點樣個這那究竟因為所以喂])`;
-    // suffix 加入咗「請」、「需要」、「給我」等腦補詞
-    const suffix = `(的)?(說|説|想|認為|覺得|希望|看|是|需要|要|給我|請)?`;
+    // 3. 分類：邊啲代名詞係合法（原文有），邊啲係幻覺（原文冇）
+    const legitPronouns = [];
+    const hallucinatedPronouns = [];
 
     for (const [zh, jpKeywords] of Object.entries(pronounMap)) {
-        // 【重要】使用排除咗人名後綴嘅 textForCheck 進行比對
         const hasOriginal = jpKeywords.some(keyword => textForCheck.includes(keyword));
-
-        if (cleaned.includes(zh) && !hasOriginal) {
-            const regex = new RegExp(`${prefix}(${zh})${suffix}`, 'g');
-            cleaned = cleaned.replace(regex, '$1');
+        if (hasOriginal) {
+            legitPronouns.push(zh);
+        } else {
+            hallucinatedPronouns.push(zh);
         }
     }
 
-    // 4. 後處理及 Log
+    // 4. 建立合併 Regex (將所有代名詞按長度倒序排列，確保「我們」先於「我」被匹配)
+    const allPronouns = [...legitPronouns, ...hallucinatedPronouns]
+        .sort((a, b) => b.length - a.length);
+
+    if (allPronouns.length === 0) return translated;
+
+    const prefix = `(^|[，。！？、而且但所以甚至並已「『)）也希望和跟與點樣個這那究竟因為所以喂])`;
+    const suffix = `(的)?(說|説|想|認為|覺得|希望|看|是|需要|要|給我|請)?`;
+
+    // 建立一個包含所有代名詞的集合 Regex
+    const pronounPattern = allPronouns.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const combinedRegex = new RegExp(`${prefix}(${pronounPattern})${suffix}`, 'g');
+
+    // 5. 執行單次替換邏輯
+    cleaned = cleaned.replace(combinedRegex, (match, p1, p2, p3, p4) => {
+        // p1: prefix, p2: pronoun, p3: '的', p4: '腦補動詞'
+
+        // 如果呢個代名詞喺「合法名單」入面，保留成個 match
+        if (legitPronouns.includes(p2)) {
+            return match;
+        }
+
+        // 如果係幻覺，只保留前綴 (p1)，洗走代名詞同後綴
+        return p1;
+    });
+
+    // 6. 後處理及 Log
     if (cleaned !== original) {
         cleaned = cleaned.replace(/([，。！？、])，/g, '$1');
         cleaned = cleaned.replace(/^[，、 ]+/, '');
