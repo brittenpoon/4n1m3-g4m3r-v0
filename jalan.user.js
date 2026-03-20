@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -939,7 +939,11 @@ function addDirectBookingButton() {
                                     const currentPrice = savedPrices[index] || 0;
                                     let comparisonText = highestAvailable > currentPrice ? "HIGHER" : (highestAvailable === currentPrice ? "SAME" : "LOWER");
 
-                                    if (highestAvailable > currentPrice) betterCouponFound = true;
+                                    if (highestAvailable > currentPrice) {
+                                        betterCouponFound = true;
+                                        const currentAmt = currentPrice;
+                                        const highestAmt = highestAvailable;
+                                    }
 
                                     console.log(`[${TAB_ID}] Slot ${index + 1}: Current (${currentPrice}) vs Highest (${highestAvailable}) => [${comparisonText}]`);
                                     logEvent("COMPARE", `Slot ${index + 1}: Cur ${currentPrice} vs Max ${highestAvailable} [${comparisonText}]`);
@@ -949,6 +953,36 @@ function addDirectBookingButton() {
 
                                 if (betterCouponFound) {
                                     console.log(`[${TAB_ID}] Higher coupon found! Triggering title flash.`);
+                                    // --- Discord 通知專用函數 ---
+                                    async function notifyDiscord(currentAmt, highestAmt) {
+                                        const DISCORD_URL = "https://discordapp.com/api/webhooks/1484590933965148351/v8aoGzclXnRQcGXdaYSYJZdjnrBch9U-FUATf9-P9xWjo95H-1BG-uiNxfpn9PLzyLgi";
+
+                                        const payload = {
+                                            embeds: [{
+                                                title: "🚨 發現高額 Coupon！ (Jalan Assistant)",
+                                                color: 5763719, // 綠色 (Discord 成功色)
+                                                fields: [
+                                                    { name: "Current (原本)", value: `¥ ${currentAmt}`, inline: true },
+                                                    { name: "Highest (最高)", value: `¥ ${highestAmt}`, inline: true },
+                                                    { name: "Tab ID", value: TAB_ID, inline: true },
+                                                    { name: "Target URL", value: sessionStorage.getItem("jalan_last_valid_url") || "Unknown" }
+                                                ],
+                                                timestamp: new Date().toISOString()
+                                            }]
+                                        };
+
+                                        try {
+                                            await fetch(DISCORD_URL, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify(payload)
+                                            });
+                                            console.log("Discord Alert Sent Successfully!");
+                                        } catch (err) {
+                                            console.error("Discord Alert Error:", err);
+                                        }
+                                    }
+                                    notifyDiscord(currentAmt, highestAmt);
                                     const originalTitle = document.title;
                                     let flashState = false;
                                     setInterval(() => {
