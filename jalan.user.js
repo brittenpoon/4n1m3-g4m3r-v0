@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      3.0
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -561,7 +561,7 @@ async function executeSuperBulkGet(ids) {
             let currentBatch = batches[i]; // Use 'let' because we might modify it
             let batchSuccess = false;
             let retryCount = 0;
-            const maxRetries = 10;
+            const maxRetries = 100;
 
             logEvent("BATCH", `Batch ${i + 1}/${batches.length} (Size: ${currentBatch.length})...`, "info");
 
@@ -602,7 +602,7 @@ async function executeSuperBulkGet(ids) {
                     if (data.result !== "0") {
                         const errorCode = data.errors?.[0]?.code || "UNKNOWN";
                         retryCount++;
-                        const delay = errorCode === 'F_MAS5033' ? 5000 : 2000;
+                        const delay = errorCode === 'F_MAS5033' ? 1000 : 1000;
 
                         logEvent("SYS BUSY", `Batch ${i+1} Err: ${errorCode}. Retry ${retryCount}/${maxRetries} in ${delay/1000}s`, "warn");
                         await new Promise(res => setTimeout(res, delay));
@@ -627,7 +627,7 @@ async function executeSuperBulkGet(ids) {
                 } catch (err) {
                     retryCount++;
                     logEvent("NET ERROR", `Attempt ${retryCount} failed. Waiting 5s...`, "error");
-                    await new Promise(res => setTimeout(res, 5000));
+                    await new Promise(res => setTimeout(res, 1000));
                 }
             }
 
