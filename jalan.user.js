@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -115,7 +115,8 @@
             "情報の読み込みが正常に行えませんでした", // Modal 錯誤
             "該当ページが存在しません",               // 頁面不存在 (404 類)
             "セッションがタイムアウトしました",       // Session Timeout
-            "アクセスが集中しています"                // Server Busy
+            "アクセスが集中しています",                // Server Busy
+            "先着予約数に達した"
         ];
 
         // 檢查頁面內容是否包含任一錯誤訊息
@@ -845,10 +846,11 @@ function addDirectBookingButton() {
                         return;
                     }
 
-                    const targetUrl = links[current].href.split('#j_intent=')[0].split('&j_intent=')[0];
-                    const safeUrl = targetUrl + (targetUrl.includes('#') ? '&' : '#') + 'j_intent=' + encodeURIComponent(targetUrl);
+                    const targetUrl = links[current].href;
+                    const lockableUrl = targetUrl + "#j_lock=" + encodeURIComponent(targetUrl);
 
-                    GM_openInTab(safeUrl, { active: false, insert: true });
+                    console.log(`[${TAB_ID}] Opening with Lock Intent: ${lockableUrl}`);
+                    GM_openInTab(lockableUrl, { active: false, insert: true });
                     current++;
                     btn.innerText = `Opening... (${current}/${total})`;
 
@@ -860,7 +862,17 @@ function addDirectBookingButton() {
         if (currentUrl.includes("uwp5100/uww5103init.do")) {
             const batchTime = localStorage.getItem("jalan_batch_open_time");
 
-            if (batchTime && (Date.now() - parseInt(batchTime)) <= 180000) {
+            const hashMatch = window.location.hash.match(/j_lock=([^&]+)/);
+            if (hashMatch) {
+                const inputUrl = decodeURIComponent(hashMatch[1]);
+                sessionStorage.setItem("jalan_last_valid_url", inputUrl);
+                sessionStorage.setItem("jalan_loop_active", "true");
+                logEvent("AUTO LOCK", "Tab locked to: " + inputUrl, "success");
+
+                history.replaceState(null, "", window.location.href.split('#')[0]);
+            }
+
+            if (batchTime && (Date.now() - parseInt(batchTime)) <= 60000) {
                 const nextImg = document.querySelector('img[alt="次へ"], img[name="nx01"]');
                 if (nextImg) {
                     console.log(`[${TAB_ID}] Within active batch window. Auto-clicking '次へ'...`);
@@ -940,9 +952,20 @@ function addDirectBookingButton() {
                                     const originalTitle = document.title;
                                     let flashState = false;
                                     setInterval(() => {
-                                        document.title = flashState ? "🚨 HIGHER COUPON! 🚨" : originalTitle;
+                                        document.title = flashState ? "🚨 HIGHER COUPON! 🚨" : "    HIGHER COUPON!    ";
                                         flashState = !flashState;
                                     }, 500);
+                                }
+                                else {
+                                    // 2. 全部都是 SAME (或 LOWER)：1秒後執行 F5 強制刷新
+                                    console.log(`[${TAB_ID}] All SAME. Triggering F5 reload in 1s...`);
+                                    logEvent("RELOAD", "All same, refreshing...", "warn");
+
+                                    setTimeout(() => {
+                                        // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
+                                        localStorage.setItem("jalan_batch_open_time", Date.now().toString());
+                                        window.location.reload();
+                                    }, 1000*60*5);
                                 }
                             }
                         }
@@ -1135,6 +1158,27 @@ function addDirectBookingButton() {
 
         if (currentUrl.includes("uww3201init.do") || (currentUrl.includes("yadNo=") && currentUrl.includes("planCd="))) {
             addDirectBookingButton();
+        }
+        if (currentUrl.includes("uwp5100/uww5106next.do")) {
+            const fullyBookedText = "先着予約数に達した";
+            const isFullyBooked = document.body && document.body.innerText.includes(fullyBookedText);
+
+            if (isFullyBooked) {
+                console.log(`[${TAB_ID}] ⚠️ Coupon limit reached! Retrying (F5) in 5s...`);
+                logEvent("LIMIT REACHED", "Retrying in 5s...", "warn");
+
+                // 5秒後強制刷新頁面 (F5)
+                setTimeout(() => {
+                    window.location.reload();
+                }, 5000);
+
+                // UI 提示
+                const statusEl = document.getElementById('loop-status');
+                if (statusEl) {
+                    statusEl.innerText = "Status: ⏳ FULLY BOOKED - RETRYING IN 5S";
+                    statusEl.style.color = "#fd7e14";
+                }
+            }
         }
     }
 
