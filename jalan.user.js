@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      2.8
+// @version      2.9
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -31,12 +31,13 @@
         localStorage.setItem("jalan_retry_logs", JSON.stringify(logs));
         renderLogs();
     }
-
+/*
     function saveIntent(url) {
         if (!url || !url.startsWith('http') || url.includes("service_error")) return;
         const cleanUrl = url.split('#j_intent=')[0].split('&j_intent=')[0];
         sessionStorage.setItem("jalan_last_valid_url", cleanUrl);
     }
+*/
 
 // --- 0.2 Universal Console Interceptor (Violentmonkey Optimized) ---
     (function() {
@@ -90,51 +91,85 @@
         });
     })();
 
-    // --- 0.5 Tab-Specific Error Recovery (Runs instantly) ---
-    const currentUrl = window.location.href;
-    const isErrorPage = currentUrl.includes("service_error/index.html");
-    const isLoginPage = currentUrl.includes("jit6001Login.do");
 
-    if (isErrorPage) {
-        let intendedUrl = null;
+  // --- 0.5 Infinite Watcher Logic (0.1s interval) ---
 
-        const hashMatch = window.location.hash.match(/j_intent=([^&]+)/);
-        if (hashMatch) {
-            intendedUrl = decodeURIComponent(hashMatch[1]);
+  const currentUrl = window.location.href;
+  const isLoginPage = currentUrl.includes("jit6001Login.do");
+  const isErrorPage = currentUrl.includes("error");
+
+// --- 0.5 Infinite Watcher (3.3 Multi-Message Detection) ---
+    let isRedirecting = false;
+
+    const JALAN_WATCHER_ID = setInterval(() => {
+        const loopActive = sessionStorage.getItem("jalan_loop_active") === "true";
+        const lockedUrl = sessionStorage.getItem("jalan_last_valid_url");
+
+        if (!loopActive || !lockedUrl) return;
+
+        const nowUrl = window.location.href;
+        const nowTitle = document.title;
+
+        // --- 錯誤訊息清單 (可隨時增加) ---
+        const errorMessages = [
+            "情報の読み込みが正常に行えませんでした", // Modal 錯誤
+            "該当ページが存在しません",               // 頁面不存在 (404 類)
+            "セッションがタイムアウトしました",       // Session Timeout
+            "アクセスが集中しています"                // Server Busy
+        ];
+
+        // 檢查頁面內容是否包含任一錯誤訊息
+        const hasErrorInContent = document.body && errorMessages.some(msg => document.body.innerText.includes(msg));
+
+        // 綜合判斷：URL、標題或內容
+        const isError = nowUrl.includes("error") ||
+                        nowUrl.includes("service_error") ||
+                        nowTitle.includes("エラー") ||
+                        nowTitle.includes("Error") ||
+                        hasErrorInContent;
+
+        // --- Soft Redirect 自我修復 ---
+        if (!isError && isRedirecting) {
+            isRedirecting = false;
+            console.log(`[${TAB_ID}] Clean page detected. Watcher Unlocked.`);
         }
 
-        if (!intendedUrl) intendedUrl = sessionStorage.getItem("jalan_last_valid_url");
+        // --- 觸發重試跳轉 ---
+        if (isError && !isRedirecting) {
+            isRedirecting = true;
+            console.log(`[${TAB_ID}] 🚨 ERROR DETECTED: ${nowUrl}. Redirecting to Locked URL...`);
 
-        if (intendedUrl && intendedUrl !== currentUrl && !intendedUrl.includes("service_error")) {
-            sessionStorage.setItem("jalan_last_valid_url", intendedUrl);
-
-            console.log(`[${TAB_ID}] Error detected. Recovering to: ${intendedUrl}`);
-            logEvent("RETRYING", intendedUrl);
-
-            sessionStorage.setItem("jalan_just_recovered", "true");
+            // 停止所有當前加載
+            window.stop();
 
             setTimeout(() => {
+                window.location.replace(lockedUrl);
+            }, 50);
+        }
+    }, 100);
+
+    // 60 分鐘保護機制
+    setTimeout(() => {
+        sessionStorage.removeItem("jalan_loop_active");
+        clearInterval(JALAN_WATCHER_ID);
+    }, 3600000);
+
+  /*
+    // --- 0.5 Tab-Specific Error Recovery (Runs instantly) ---
+    if (isErrorPage) {
+        const intendedUrl = sessionStorage.getItem("jalan_last_valid_url");
+
+        if (intendedUrl) {
+            console.log(`[${TAB_ID}] Error! Retrying Locked URL in 0.1s...`);
+            // 使用 replace 防止在 history 堆疊產生大量 error 紀錄
+            setTimeout(() => {
                 window.location.replace(intendedUrl);
-            }, 1000);
-        } else {
-            console.warn(`[${TAB_ID}] No saved url found for this tab.`);
-            logEvent("ERROR -> NO URL", currentUrl);
+            }, 100);
         }
-    } else {
-        if (sessionStorage.getItem("jalan_just_recovered") === "true") {
-            logEvent("RECOVERED SUCCESS", currentUrl);
-            sessionStorage.removeItem("jalan_just_recovered");
-        }
-
-        if (window.location.hash.includes('j_intent=')) {
-            const cleanUrl = currentUrl.split('#j_intent=')[0].split('&j_intent=')[0];
-            history.replaceState(null, "", cleanUrl);
-        }
-
-        saveIntent(currentUrl);
     }
 
     // --- 0.6 Preemptive Link & Button Capturing ---
+
     document.addEventListener('mousedown', (e) => {
         const link = e.target.closest('a');
         if (link && link.href && link.href.startsWith('http')) {
@@ -160,6 +195,7 @@
             }
         }
     }, true);
+    */
 
     // --- 1. Database Initialization ---
     let db;
@@ -219,12 +255,26 @@
                     <span style="font-weight: bold; font-size: 12px;">Jalan Assistant <span style="font-size:9px; background:rgba(0,0,0,0.2); padding:2px; border-radius:3px;">${TAB_ID}</span></span>
                     <span id="btn-minimize" style="cursor: pointer; font-size: 18px; padding: 0 5px;">&minus;</span>
                 </div>
-
-                <div class="j-section" style="background: #fdfdfd; padding: 5px 10px;">
-                    <span style="font-size: 9px; color: #666;">Locked URL:</span><br>
-                    <span style="font-size: 10px; color: #007bff; word-break: break-all; line-height: 1.2;">${lockedUrl}</span>
+                <div class="j-section" style="background: #fff3cd; border: 1px solid #ffeeba; padding: 8px;">
+                    <b style="font-size: 11px; color: #856404;">🔗 MANUAL URL LOCK</b>
+                    <input type="text" style="display:none;" aria-hidden="true">
+                    <input type="password" style="display:none;" aria-hidden="true">
+                    <input type="text"
+                           id="manual-locked-url"
+                           name="no_fill_${Math.random().toString(36).substring(7)}"
+                           autocomplete="new-password"
+                           readonly
+                           onfocus="this.removeAttribute('readonly');"
+                           spellcheck="false"
+                           style="width:100%; font-size: 11px; margin-top:5px; border:1px solid #ffe082; padding:5px; box-sizing:border-box; background: #fff;"
+                           placeholder="Click to paste Booking URL..."
+                           value="${sessionStorage.getItem("jalan_last_valid_url") || ""}">
+                    <div style="display:flex; gap:2px; margin-top:3px;">
+                        <button id="btn-set-go" class="j-btn" style="background: #28a745; flex:2; font-weight:bold;">SET & GO</button>
+                        <button id="btn-stop-loop" class="j-btn" style="background: #6c757d; flex:1;">STOP</button>
+                    </div>
+                    <div id="loop-status" style="font-size: 10px; margin-top: 5px; text-align:center; font-weight:bold;">Status: Ready</div>
                 </div>
-
                 <div class="j-section">
                     <b style="font-size: 11px;">10 DAYS SCHEDULE</b>
                     <div id="jalan-schedule-container" style="font-size: 10px; margin-top: 5px; background: #fffde7; padding: 5px; border: 1px solid #ffe082; border-radius: 3px;">
@@ -277,6 +327,26 @@
             let allLogs = JSON.parse(localStorage.getItem("jalan_retry_logs") || "[]");
             localStorage.setItem("jalan_retry_logs", JSON.stringify(allLogs.filter(l => l.tab !== TAB_ID)));
             renderLogs();
+        };
+        document.getElementById('btn-set-go').onclick = () => {
+            const inputUrl = document.getElementById('manual-locked-url').value.trim();
+            if (inputUrl.startsWith('http')) {
+                sessionStorage.setItem("jalan_last_valid_url", inputUrl);
+                sessionStorage.setItem("jalan_loop_active", "true");
+                logEvent("LOOP START", "Target Locked: " + inputUrl, "success");
+                window.location.href = inputUrl;
+            } else {
+                alert("Invalid URL!");
+            }
+        };
+        document.getElementById('btn-set-go').onclick = () => {
+            const inputUrl = document.getElementById('manual-locked-url').value.trim();
+            if (inputUrl.startsWith('http')) {
+                sessionStorage.setItem("jalan_last_valid_url", inputUrl);
+                sessionStorage.setItem("jalan_loop_active", "true");
+                isRedirecting = true; // 撳掣嗰刻都鎖一鎖
+                window.location.href = inputUrl;
+            }
         };
         if (isLoginPage) { document.getElementById('save-auth').onclick = saveAuth; loadAuthToUI(); }
     }
@@ -650,6 +720,92 @@ async function executeSuperBulkGet(ids) {
         batchSection.appendChild(btn);
     }
 
+function addDirectBookingButton() {
+        const wrap = document.querySelector('.p-planOverview__reservationWrap');
+        if (!wrap) return;
+
+        // 避免重複添加按鈕
+        if (document.getElementById('jalan-direct-booking-btn')) return;
+
+        const originalBtn = wrap.querySelector('a[href^="JavaScript:onLogin"]');
+        if (!originalBtn) return;
+
+        // 1. 提取 onLogin 傳入的原始參數
+        const paramsMatch = originalBtn.getAttribute('href').match(/onLogin\((.*?)\)/);
+        if (!paramsMatch) return;
+
+        // 參數順序: yyyy, mm, dd, totalPrice, campaignPoint, stgPoint, score, position, promotionPlanJudgeFlg
+        const p = paramsMatch[1].split(',').map(s => s.trim().replace(/'/g, ""));
+        const [yyyy, mm, dd, totalPrice, campaignPoint, stgPoint, score, position, promotionPlanJudgeFlg] = p;
+
+        // 2. 假設已登入狀態，設置 ccnt 後綴為 _input
+        const ccntPcYadPlan = "pc_yad_planDetail_yoyakuBtn" + (position || '') + "_input";
+
+        // 3. 從當前 URL 提取 ID 類參數以確保準確性
+        const urlParams = new URLSearchParams(window.location.search);
+        const yadNo = urlParams.get('yadNo') || "327710";
+        const planCd = urlParams.get('planCd') || "03545138";
+        const roomTypeCd = urlParams.get('roomTypeCd') || "0483008";
+        const roomCrack = urlParams.get('roomCrack') || "400000";
+        const adultNum = urlParams.get('adultNum') || "4";
+        const stayCount = urlParams.get('stayCount') || "1";
+        const roomCount = urlParams.get('roomCount') || "1";
+
+        // 4. 嚴格依照 onLogin 原始碼拼接 TEMP1 (使用 %2B 代表 + 和 %23 代表 #)
+        let a1 = `yadNo%2B${yadNo}%23` +
+                 `planCd%2B${planCd}%23` +
+                 `stayYear%2B${yyyy}%23stayMonth%2B${mm}%23stayDay%2B${dd}%23` +
+                 `rootCd%2B%23` +
+                 `roomCount%2B${roomCount}%23` +
+                 `stayCount%2B${stayCount}%23` +
+                 `roomTypeCd%2B${roomTypeCd}%23` +
+                 `dreportId%2B%23` +
+                 `adultNum%2B${adultNum}%23` +
+                 `child1Num%2B%23` +
+                 `child2Num%2B%23` +
+                 `child3Num%2B%23` +
+                 `child4Num%2B%23` +
+                 `child5Num%2B%23` +
+                 `roomCrack%2B${roomCrack}%23` +
+                 `afCd%2B%23` +
+                 `dateUndecided%2B%23` +
+                 `promotionPlanJudgeFlg%2B${promotionPlanJudgeFlg}%23` +
+                 `ccnt%2B${ccntPcYadPlan}`;
+
+        // 5. 組合成最終的 Login Redirect URL
+        let finalUrl = `https://www.jalan.net/ji/pc/jit6001Login.do?` +
+                       `TEMP1=${a1}` +
+                       `&TEMP2=https://www.jalan.net/uw/uwp5200/uww5201init.do` +
+                       `&TEMP4=LEVEL_R` +
+                       `&TEMP5=https://www.jalan.net/uw/uwp5000/uww5001init.do` +
+                       `&TEMP6=${campaignPoint}`;
+
+        if (stgPoint) finalUrl += `&stgp=${stgPoint}`;
+        if (score) finalUrl += `&score=${score}`;
+        finalUrl += `&ccnt=${ccntPcYadPlan}`;
+
+        // 6. 建立 UI 按鈕
+        const btn = document.createElement('button');
+        btn.id = 'jalan-direct-booking-btn';
+        btn.innerText = "📋 Copy Direct Booking URL";
+        btn.style.cssText = "display:block; width:100%; margin-top:10px; padding:10px; background:#28a745; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-family: sans-serif;";
+
+        btn.onclick = (e) => {
+            e.preventDefault();
+            navigator.clipboard.writeText(finalUrl).then(() => {
+                const originalText = btn.innerText;
+                btn.innerText = "✅ URL Copied!";
+                btn.style.background = "#155724";
+                setTimeout(() => {
+                    btn.innerText = originalText;
+                    btn.style.background = "#28a745";
+                }, 2000);
+            });
+        };
+
+        wrap.appendChild(btn);
+    }
+
 // --- 3. Page Specific Logic (Background Tabs & Status) ---
     function checkPageSpecifics() {
 
@@ -975,6 +1131,10 @@ async function executeSuperBulkGet(ids) {
             // Start the Auto-Login process
             handleAutoLogin();
             return;
+        }
+
+        if (currentUrl.includes("uww3201init.do") || (currentUrl.includes("yadNo=") && currentUrl.includes("planCd="))) {
+            addDirectBookingButton();
         }
     }
 
