@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -116,7 +116,8 @@
             "該当ページが存在しません",               // 頁面不存在 (404 類)
             "セッションがタイムアウトしました",       // Session Timeout
             "アクセスが集中しています",                // Server Busy
-            "先着予約数に達した"
+            "先着予約数に達した",
+            "Hmmm… can't reach this page"
         ];
 
         // 檢查頁面內容是否包含任一錯誤訊息
@@ -154,6 +155,25 @@
         sessionStorage.removeItem("jalan_loop_active");
         clearInterval(JALAN_WATCHER_ID);
     }, 3600000);
+
+    function keepAlive() {
+        if (document.getElementById('hidden-nosleep-video')) return;
+
+        const video = document.createElement('video');
+        video.id = 'hidden-nosleep-video';
+        video.loop = true;
+        video.muted = true;
+        video.setAttribute('playsinline', '');
+        video.style.display = 'none';
+
+        // 使用一個極小的 Base64 影片檔（1秒空白影片）
+        video.src = "data:video/mp4;base64,AAAAHGZ0eXBtcDQyAAAAAG1wNDJpc29tYXZjMQAAAzphdmMxAGIAYv//AAAAGmF2Y0MBYgBi//+AABp/+EAB9v6P8AAAABh0cmFrAAAAXHRraGQAAAAHAAAAAQAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAABAAEAAAAAAZBtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAB1MAAA1cAF1Zf///zgA";
+
+        document.body.appendChild(video);
+
+        // 必須由用戶觸發（例如你撳 SET & GO 嗰陣啟動）
+        video.play().catch(e => console.log("Video Play Blocked: Need user interaction first."));
+    }
 
   /*
     // --- 0.5 Tab-Specific Error Recovery (Runs instantly) ---
@@ -812,6 +832,7 @@ function addDirectBookingButton() {
 
         // --- Page A: Reservation List (Batch Opener) ---
         if (currentUrl.includes("uwp5100/uww5121.do")) {
+
             const batchSection = document.getElementById('batch-actions');
             const openAllWrapper = document.getElementById('wrapper-open-all');
             if (batchSection) batchSection.style.display = 'block';
@@ -853,9 +874,16 @@ function addDirectBookingButton() {
                     GM_openInTab(lockableUrl, { active: false, insert: true });
                     current++;
                     btn.innerText = `Opening... (${current}/${total})`;
+                    renderLogs();
 
                 }, 1000);
             };
+            keepAlive();
+            logEvent("RELOAD", "Refreshing in "+ 60+ "s" , "warn");
+            renderLogs();
+            setInterval(() => {
+                window.location.reload();
+            }, 60000);
         }
 
         // --- Page B: Modification Input Page (Auto Click '次へ') ---
@@ -881,6 +909,7 @@ function addDirectBookingButton() {
                     }, 800);
                 }
             }
+            keepAlive();
         }
 
         // --- Page C: Coupon Application Page ---
@@ -950,6 +979,7 @@ function addDirectBookingButton() {
                                 });
 
                                 renderLogs(); // 強制即時更新 UI 面板
+                                keepAlive();
 
                                 if (betterCouponFound) {
                                     console.log(`[${TAB_ID}] Higher coupon found! Triggering title flash.`);
@@ -958,6 +988,9 @@ function addDirectBookingButton() {
                                         const DISCORD_URL = "https://discordapp.com/api/webhooks/1484590933965148351/v8aoGzclXnRQcGXdaYSYJZdjnrBch9U-FUATf9-P9xWjo95H-1BG-uiNxfpn9PLzyLgi";
 
                                         const payload = {
+                                            "content": "@everyone 🚨 發現更高金額 Coupon！",
+                                            "username": "Jalan Assistant",
+                                            "avatar_url": "https://www.jalan.net/favicon.ico",
                                             embeds: [{
                                                 title: "🚨 發現高額 Coupon！ (Jalan Assistant)",
                                                 color: 5763719, // 綠色 (Discord 成功色)
@@ -992,14 +1025,14 @@ function addDirectBookingButton() {
                                 }
                                 else {
                                     // 2. 全部都是 SAME (或 LOWER)：1秒後執行 F5 強制刷新
-                                    console.log(`[${TAB_ID}] All SAME. Triggering F5 reload in 1s...`);
-                                    logEvent("RELOAD", "All same, refreshing...", "warn");
+                                    console.log(`[${TAB_ID}] All SAME. Triggering F5 reload in 60s...`);
+                                    logEvent("RELOAD", "All same, refreshing in "+ 60+ "s" , "warn");
 
                                     setTimeout(() => {
                                         // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
                                         localStorage.setItem("jalan_batch_open_time", Date.now().toString());
                                         window.location.reload();
-                                    }, 1000*60*5);
+                                    }, 1000*60);
                                 }
                             }
                         }
