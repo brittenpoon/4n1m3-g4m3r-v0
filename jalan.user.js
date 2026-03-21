@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -946,6 +946,50 @@ function confirmbookingdetail() {
     }, 500);
 }
 
+function editduplicatenext() {
+    let attempts = 0;
+    const maxAttempts = 10; // 5秒內嘗試
+
+    const interval = setInterval(() => {
+        try {
+            attempts++;
+            console.log(`正在嘗試點擊繼續... (第 ${attempts} 次)`);
+
+            // 1. 透過圖片的 alt 屬性定位
+            const continueImg = document.querySelector('img[alt="続ける"]');
+
+            if (continueImg) {
+                const continueLink = continueImg.closest('a');
+                if (continueLink) {
+                    console.log("搵到「続ける」按鈕，正在點擊...");
+                    continueLink.click();
+                    clearInterval(interval);
+                    return;
+                }
+            }
+
+            // 2. 備用方案：如果 img 定位唔到，試吓搵 onclick 包含 doNext 的連結
+            const allLinks = Array.from(document.querySelectorAll('a[onclick]'));
+            const doNextLink = allLinks.find(a => a.getAttribute('onclick').includes('doNext'));
+
+            if (doNextLink) {
+                console.log("透過 onclick 定位到繼續按鈕，正在點擊...");
+                doNextLink.click();
+                clearInterval(interval);
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                console.log("超過 5 秒未發現繼續按鈕。");
+                clearInterval(interval);
+            }
+        } catch (e) {
+            console.error("editduplicatenext 執行出錯:", e);
+            if (attempts >= maxAttempts) clearInterval(interval);
+        }
+    }, 500);
+}
+
 
 // --- 3. Page Specific Logic (Background Tabs & Status) ---
     function checkPageSpecifics() {
@@ -1034,8 +1078,8 @@ function confirmbookingdetail() {
 
         // --- Page C: Coupon Application Page ---
         if (currentUrl.includes("uwp5100/uww5103next.do")) {
+            editduplicatenext();
             console.log(`[${TAB_ID}] Coupon page detected. Starting Step 1...`);
-
             const wrapper = document.querySelector('.js-selectedCouponWrapper, .selectedCouponWrapper');
 
             if (!wrapper) {
