@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.6
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -116,7 +116,6 @@
             "該当ページが存在しません",               // 頁面不存在 (404 類)
             "セッションがタイムアウトしました",       // Session Timeout
             "アクセスが集中しています",                // Server Busy
-            "先着予約数に達した",
             "Hmmm… can't reach this page"
         ];
 
@@ -1196,7 +1195,7 @@ function editduplicatenext() {
                                         // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
                                         localStorage.setItem("jalan_batch_open_time", Date.now().toString());
                                         window.location.reload();
-                                    }, 1000*60);
+                                    }, 1000*5);
                                 }
                             }
                         }
