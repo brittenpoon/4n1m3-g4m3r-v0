@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -827,6 +827,126 @@ function addDirectBookingButton() {
         wrap.appendChild(btn);
     }
 
+function selectbookingdetail() {
+    let attempts = 0;
+    const maxAttempts = 10; // 500ms 一次，10 次即係 5 秒
+
+    const interval = setInterval(() => {
+        try {
+            attempts++;
+            console.log(`正在嘗試自動填表... (第 ${attempts} 次)`);
+
+            // 1. 處理彈窗 (用文字定位)
+            const allButtons = Array.from(document.querySelectorAll('button'));
+            const continueButton = allButtons.find(btn => btn.textContent.trim() === '予約を続ける');
+            if (continueButton) {
+                continueButton.click();
+                // 撳咗之後唔好即刻 Stop，俾下一次 Loop 嚟填表
+                return;
+            }
+
+            // 2. 檢查關鍵元素是否存在 (用男人人數 Select 嚟做指標)
+            const manSelect0 = document.querySelector('select[name="rsvInfoList[0].adultManNum"]');
+            if (!manSelect0) {
+                if (attempts >= maxAttempts) clearInterval(interval);
+                return; // 仲未見到表單，跳去下一次 Loop
+            }
+
+            // --- 開始填表邏輯 ---
+
+            // 偵測房數
+            const roomCount = document.querySelectorAll('select[name$=".adultManNum"]').length;
+
+            const setVal = (name, val) => {
+                const el = document.querySelector(`select[name="${name}"]`);
+                if (el) {
+                    const exists = Array.from(el.options).some(o => o.value === String(val));
+                    el.value = exists ? String(val) : el.options[el.options.length - 1].value;
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            };
+
+            // 執行不同 Case
+            if (roomCount === 1) {
+                const maxMan = Math.max(...Array.from(manSelect0.options).map(o => parseInt(o.value) || 0));
+                if (maxMan >= 3) {
+                    setVal('rsvInfoList[0].adultManNum', 3);
+                    setVal('rsvInfoList[0].adultWomanNum', 1);
+                } else {
+                    setVal('rsvInfoList[0].adultManNum', 1);
+                    setVal('rsvInfoList[0].adultWomanNum', 1);
+                }
+            } else if (roomCount >= 2) {
+                setVal('rsvInfoList[0].adultManNum', 1);
+                setVal('rsvInfoList[0].adultWomanNum', 1);
+                setVal('rsvInfoList[1].adultManNum', 2);
+                setVal('rsvInfoList[1].adultWomanNum', 0);
+            }
+
+            // 其他通用項
+            const checkin = document.querySelector('select[name="checkinTime"]');
+            if (checkin) {
+                checkin.value = "18:00";
+                checkin.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            const repay = document.querySelector('textarea[name="repay"]');
+            if (repay) {
+                repay.value = ".";
+                repay.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            const localPay = document.querySelector('input[name="localPayCardFlg"][value="0"]');
+            if (localPay) {
+                localPay.checked = true;
+                localPay.click();
+            }
+
+            // 如果行到呢度都無 Error，代表填表完成，可以停咗個 Interval
+            console.log("自動填表完成！");
+            clearInterval(interval);
+
+        } catch (e) {
+            console.error("嘗試填表時出錯:", e);
+            if (attempts >= maxAttempts) clearInterval(interval);
+        }
+    }, 500); // 每 0.5 秒跑一次
+}
+
+function confirmbookingdetail() {
+    let attempts = 0;
+    const maxAttempts = 10; // 5秒內嘗試 (每 500ms 一次)
+
+    const interval = setInterval(() => {
+        try {
+            attempts++;
+            console.log(`正在嘗試提交預約... (第 ${attempts} 次)`);
+
+            // 定義目標：包含 "予約を完了する" 字眼的 <a> 標籤
+            const allLinks = Array.from(document.querySelectorAll('a.alert_button.reserve_button'));
+            const finishButton = allLinks.find(a => a.textContent.includes('予約を完了する'));
+
+            if (finishButton) {
+                console.log("搵到確認按鈕，正在點擊...");
+                // 由於佢係 <a href="#noMove" onclick="doNext()">，直接 click() 就會觸發 doNext()
+                finishButton.click();
+
+                clearInterval(interval);
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                console.log("超過 5 秒未發現確認按鈕，停止嘗試。");
+                clearInterval(interval);
+            }
+        } catch (e) {
+            console.error("confirmbookingdetail 執行出錯:", e);
+            if (attempts >= maxAttempts) clearInterval(interval);
+        }
+    }, 500);
+}
+
+
 // --- 3. Page Specific Logic (Background Tabs & Status) ---
     function checkPageSpecifics() {
 
@@ -1246,6 +1366,13 @@ function addDirectBookingButton() {
                     statusEl.style.color = "#fd7e14";
                 }
             }
+        }
+
+        if (currentUrl.includes("uww5001init.do")) {
+            selectbookingdetail();
+        }
+        if (currentUrl.includes("uww5050next.do")) {
+            confirmbookingdetail();
         }
     }
 
