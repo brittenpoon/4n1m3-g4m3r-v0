@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      4.4
+// @version      4.5
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -12,6 +12,11 @@
 
 (function() {
     'use strict';
+
+    const global_cooldown = 15000;
+    const getSafeDelay = (presetDelay) => {
+        return Math.max(global_cooldown, presetDelay);
+    };
 
     // --- 0. Unique Tab ID Generation ---
     const TAB_ID = sessionStorage.getItem('JALAN_TAB_ID') || (() => {
@@ -140,12 +145,6 @@
         if (isError && !isRedirecting) {
             isRedirecting = true;
             console.log(`[${TAB_ID}] 🚨 ERROR DETECTED: ${nowUrl}. Redirecting to Locked URL...`);
-
-            if (lockedUrl.includes("uww5103init.do")) {
-                console.log(`[${TAB_ID}] Target is Init page. Refreshing batch time for Auto-Next.`);
-                localStorage.setItem("jalan_batch_open_time", Date.now().toString());
-            }
-
             // 停止所有當前加載
             window.stop();
 
@@ -156,10 +155,10 @@
     }, 100);
 
     // 60 分鐘保護機制
-    setTimeout(() => {
+    /*setTimeout(() => {
         sessionStorage.removeItem("jalan_loop_active");
         clearInterval(JALAN_WATCHER_ID);
-    }, 3600000);
+    }, 360000000);*/
 
     function keepAlive() {
         if (document.getElementById('hidden-nosleep-video')) return;
@@ -953,7 +952,7 @@ async function checkAndConfirmBooking() {
 
         if (!pageHotelName || isNaN(currentPrice)) {
             console.log("[Jalan Helper] 數據抓取失敗，5秒後重試...");
-            setTimeout(() => window.location.reload(), 5000);
+            setTimeout(() => window.location.reload(), getSafeDelay(5000));
             return;
         }
 
@@ -987,15 +986,15 @@ async function checkAndConfirmBooking() {
             }
         } else if (currentPrice === target.target_price) {
             logEvent("EQUAL", `價格不變 (${currentPrice})，15秒後重新整理...`, "info");
-            setTimeout(() => window.location.reload(), 15000);
+            setTimeout(() => window.location.reload(), getSafeDelay(15000));
         } else {
             logEvent("HIGHER", `價格過高 (${currentPrice} > ${target.target_price})，5秒後快速重試...`, "warn");
-            setTimeout(() => window.location.reload(), 1000);
+            setTimeout(() => window.location.reload(), getSafeDelay(1000));
         }
 
     } catch (e) {
         logEvent("ERROR", "JSON 讀取失敗，5秒後重試。");
-        setTimeout(() => window.location.reload(), 5000);
+        setTimeout(() => window.location.reload(), getSafeDelay(5000));
     }
 }
 
@@ -1232,8 +1231,6 @@ function executeJalanNext() {
                 const total = links.length;
                 if (total === 0) return alert("No '予約変更' buttons found.");
 
-                localStorage.setItem("jalan_batch_open_time", Date.now().toString());
-
                 btn.disabled = true;
                 let current = 0;
                 btn.innerText = `Opening... (0/${total})`;
@@ -1273,8 +1270,6 @@ function executeJalanNext() {
 
         // --- Page B: Modification Input Page (Auto Click '次へ') ---
         if (currentUrl.includes("uwp5100/uww5103init.do")) {
-            const batchTime = localStorage.getItem("jalan_batch_open_time");
-
             const hashMatch = window.location.hash.match(/j_lock=([^&]+)/);
             if (hashMatch) {
                 const inputUrl = decodeURIComponent(hashMatch[1]);
@@ -1285,7 +1280,8 @@ function executeJalanNext() {
                 history.replaceState(null, "", window.location.href.split('#')[0]);
             }
 
-            if (batchTime && (Date.now() - parseInt(batchTime)) <= 60000) {
+            const loopActive = sessionStorage.getItem("jalan_loop_active") === "true";
+            if (loopActive) {
                 const nextImg = document.querySelector('img[alt="次へ"], img[name="nx01"]');
                 if (nextImg) {
                     console.log(`[${TAB_ID}] Within active batch window. Auto-clicking '次へ'...`);
@@ -1305,7 +1301,7 @@ if (currentUrl.includes("uwp5100/uww5103next.do")) {
     if (!wrapper) {
         logEvent("COUPON", "No applicable coupon wrapper found.");
         // 如果連選單都沒出現，視為無優惠券，執行 15s 刷新
-        setTimeout(() => window.location.reload(), 1000);
+        setTimeout(() => window.location.reload(), getSafeDelay(1000));
     } else {
         const changeBtn = wrapper.querySelector('.js-changeCouponBtn, .changeCouponBtn');
         if (changeBtn) changeBtn.click();
@@ -1366,7 +1362,7 @@ if (currentUrl.includes("uwp5100/uww5103next.do")) {
                     }, 800);
                 } else {
                     logEvent("SAME", `Price same (¥${totalCurrent}). Refresh in 15s...`, "info");
-                    setTimeout(() => window.location.reload(), 1000);
+                    setTimeout(() => window.location.reload(), getSafeDelay(1000));
                 }
             }
             if (attempts > 20) clearInterval(evalInterval);
@@ -1556,13 +1552,12 @@ if (currentUrl.includes("uwp5100/uww5106next.do")) {
         } else {
             // --- 階段 2：超過 60 次，重置計數器並跳回起點 ---
             logEvent("LIMIT REACHED", "60 retries failed. Jumping back to Lock URL...", "error");
-            localStorage.setItem("jalan_batch_open_time", Date.now().toString());
             sessionStorage.setItem("jalan_fully_booked_retry_count", "0"); // 重置計數器
 
             const lockedUrl = sessionStorage.getItem("jalan_last_valid_url");
             setTimeout(() => {
                 window.location.replace(lockedUrl);
-            }, 1000);
+            }, getSafeDelay(1000));
         }
 
         return; // 滿額就唔好再行落去
