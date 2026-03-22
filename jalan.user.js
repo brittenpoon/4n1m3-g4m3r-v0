@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -1004,34 +1004,55 @@ function confirmbookingdetail() {
         try {
             if (document.readyState === 'loading') return;
 
-            // 1. 定位按鈕 (同時搜尋 <a> 和 <button>)
-            // 優先尋找 class 包含 reserve_button 且文字正確的元素
-            const confirmBtn = Array.from(document.querySelectorAll('a.reserve_button, button')).find(el =>
-                el.innerText.includes('予約を完了する') || el.querySelector('.reserve_button_text')
-            );
+            // --- 強化定位：涵蓋 <a>, <button>, 以及 <img> (針對 nx01) ---
+            // 優先尋找有 doNext 的元素，或包含特定文字/Alt 的元素
+            const confirmBtn = Array.from(document.querySelectorAll('a, button, img')).find(el => {
+                const onclick = el.getAttribute('onclick') || "";
+                const text = el.innerText || "";
+                const alt = el.getAttribute('alt') || "";
+                
+                // 命中條件：
+                // 1. 直接有 doNext()
+                // 2. 文字包含 "予約を完了する"
+                // 3. 圖片 Alt 包含 "確定" 或 "完了"
+                return onclick.includes('doNext') || 
+                       text.includes('予約を完了する') || 
+                       alt.includes('確定') || 
+                       alt.includes('完了');
+            });
 
             if (confirmBtn) {
-                // 2. 狀態檢查
+                // --- 狀態檢查 (針對預約頁的「未入力」) ---
                 const btnText = confirmBtn.innerText.trim();
-
-                // 檢查是否為「未入力」狀態
+                const btnAlt = confirmBtn.getAttribute('alt') || "";
+                
                 if (btnText.includes('未入力')) {
                     console.log(`[${TAB_ID}] 填表未完成 (顯示: ${btnText})，等待中...`);
                     return;
                 }
 
-                console.log(`[${TAB_ID}] ✅ 發現目標按鈕 [${btnText}]，執行提交...`);
+                console.log(`[${TAB_ID}] ✅ 發現提交目標 [${btnText || btnAlt}]，執行點擊...`);
 
-                // 3. 執行提交
-                // 方法 A: 如果是連結且有 onclick 屬性，直接執行該 JS 方法 (最保險)
-                const onclickAttr = confirmBtn.getAttribute('onclick');
-                if (onclickAttr && onclickAttr.includes('doNext')) {
-                    console.log(`[${TAB_ID}] 觸發頁面 doNext() 方法`);
-                    unsafeWindow.doNext(); // 透過 Tampermonkey 的 unsafeWindow 呼叫原生 doNext
+                // --- 執行提交 ---
+                const onclickAttr = confirmBtn.getAttribute('onclick') || "";
+                
+                // 優先執行 doNext()
+                if (onclickAttr.includes('doNext')) {
+                    console.log(`[${TAB_ID}] 觸發 unsafeWindow.doNext()`);
+                    if (typeof unsafeWindow.doNext === 'function') {
+                        // 針對特定頁面可能需要傳參數，通常 doNext() 唔帶參數亦可
+                        unsafeWindow.doNext(); 
+                    } else {
+                        confirmBtn.click();
+                    }
                 } else {
-                    // 方法 B: 普通點擊
-                    confirmBtn.focus();
-                    confirmBtn.click();
+                    // 針對普通按鈕
+                    if (confirmBtn.tagName === 'IMG') {
+                        confirmBtn.closest('a')?.click() || confirmBtn.click();
+                    } else {
+                        confirmBtn.focus();
+                        confirmBtn.click();
+                    }
                 }
 
                 clearInterval(interval);
@@ -1039,7 +1060,7 @@ function confirmbookingdetail() {
             }
 
             if (attempts >= maxAttempts) {
-                console.log(`[${TAB_ID}] 提交超時：找不到 [予約を完了する] 按鈕。`);
+                console.log(`[${TAB_ID}] 提交超時：找不到 [確定/予約完了] 相關按鈕。`);
                 clearInterval(interval);
             }
         } catch (e) {
@@ -1098,14 +1119,56 @@ function editduplicatenext() {
 
             // 超時處理
             if (attempts >= maxAttempts) {
-                console.log(`[${TAB_ID}] 嘗試超時，自動刷新重試...`);
+                console.log(`[${TAB_ID}] 嘗試超時`);
                 clearInterval(interval);
-                window.location.reload();
             }
         } catch (e) {
             console.error("editduplicatenext error:", e);
         }
     }, 500);
+}
+
+// 驗證頁面上的 Coupon 名稱是否與預期一致
+function checkGhostCoupon() {
+    const intendedNames = JSON.parse(sessionStorage.getItem("intended_coupons") || "[]");
+    if (intendedNames.length === 0) return true; // 冇紀錄就當通過
+
+    const pageContent = document.body.innerText;
+    console.log(`[${TAB_ID}] 正在比對預期名單:`, intendedNames);
+
+    // 搵出名單入面有邊張 Coupon 係頁面搵唔到嘅
+    const missing = intendedNames.filter(name => !pageContent.includes(name));
+
+    if (missing.length > 0) {
+        logEvent("GHOST_DETECTED", `缺失 Coupon: ${missing.join(', ')}`, "error");
+
+        const lockedUrl = sessionStorage.getItem("jalan_last_valid_url");
+        sessionStorage.removeItem("intended_coupons"); // 清除舊紀錄
+
+        if (lockedUrl) {
+            console.log(`[${TAB_ID}] 偵測到 Ghost Coupon，跳轉回 URL Lock...`);
+            window.location.replace(lockedUrl);
+        }
+        return false;
+    }
+    return true;
+}
+
+// 執行跳轉至下一步 (適用於 uww5103next.do)
+function executeJalanNext() {
+    try {
+        if (typeof unsafeWindow.doNext === 'function') {
+            unsafeWindow.doNext();
+        } else {
+            const nextBtn = document.querySelector('a[onclick*="doNext"], img[name="nx01"]');
+            if (nextBtn) {
+                const link = nextBtn.closest('a') || nextBtn;
+                link.click();
+            }
+        }
+    } catch (e) {
+        console.error("executeJalanNext 執行失敗:", e);
+    }
 }
 
 
@@ -1195,144 +1258,81 @@ function editduplicatenext() {
         }
 
         // --- Page C: Coupon Application Page ---
-        if (currentUrl.includes("uwp5100/uww5103next.do")) {
-            editduplicatenext();
-            console.log(`[${TAB_ID}] Coupon page detected. Starting Step 1...`);
-            const wrapper = document.querySelector('.js-selectedCouponWrapper, .selectedCouponWrapper');
+if (currentUrl.includes("uwp5100/uww5103next.do")) {
+    editduplicatenext(); // 處理可能的「繼續」彈窗或按鈕
 
-            if (!wrapper) {
-                console.log(`[${TAB_ID}] Wrapper NOT found. Logging 'no applicable coupon'.`);
-                logEvent("COUPON", "no applicable coupon");
-                renderLogs(); // 更新 UI
-            } else {
-                console.log(`[${TAB_ID}] Wrapper found! Proceeding to Step 2...`);
+    const wrapper = document.querySelector('.js-selectedCouponWrapper, .selectedCouponWrapper');
+    if (!wrapper) {
+        logEvent("COUPON", "No applicable coupon wrapper found.");
+        // 如果連選單都沒出現，視為無優惠券，執行 15s 刷新
+        setTimeout(() => window.location.reload(), 15000);
+    } else {
+        const changeBtn = wrapper.querySelector('.js-changeCouponBtn, .changeCouponBtn');
+        if (changeBtn) changeBtn.click();
 
-                const listItems = wrapper.querySelectorAll('.selectedCouponList__item');
-                const savedPrices = Array.from(listItems).map(li => {
-                    const priceSpan = li.querySelector('.selectedCouponPrice');
-                    return priceSpan ? (parseInt(priceSpan.textContent.replace(/[^0-9]/g, ''), 10) || 0) : 0;
+        let attempts = 0;
+        const evalInterval = setInterval(() => {
+            attempts++;
+            const selects = document.querySelectorAll('select[name="discountCouponListInfoValue"]');
+            const hasOptions = Array.from(selects).some(s => s.querySelector('option[data-coupon-price]'));
+
+            if (hasOptions) {
+                clearInterval(evalInterval);
+                let betterCouponFound = false;
+                let finalIntendedNames = [];
+                let totalCurrent = 0;
+                let totalMax = 0;
+
+                selects.forEach((select, index) => {
+                    const options = Array.from(select.querySelectorAll('option[data-coupon-price]'));
+                    const currentSelected = select.querySelector('option:checked');
+                    const currentVal = currentSelected ? (parseInt(currentSelected.getAttribute('data-coupon-price')) || 0) : 0;
+
+                    let highestPrice = 0;
+                    let highestOpt = null;
+
+                    options.forEach(opt => {
+                        const price = parseInt(opt.getAttribute('data-coupon-price')) || 0;
+                        if (price >= highestPrice) {
+                            highestPrice = price;
+                            highestOpt = opt;
+                        }
+                    });
+
+                    totalCurrent += currentVal;
+                    totalMax += highestPrice;
+
+                    if (highestOpt) {
+                        highestOpt.selected = true;
+                        const cpnName = highestOpt.getAttribute('data-coupon-name') || highestOpt.innerText.trim();
+                        finalIntendedNames.push(cpnName);
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
                 });
 
-                console.log(`[${TAB_ID}] Extracted saved prices:`, savedPrices);
-                logEvent("COUPON SAVED", savedPrices.map(p => p > 0 ? p : 'n/a').join(' | '));
-                // 呢度唔需要 renderLogs()，因為 initApp() 隨後會 call 一次
+                // 紀錄名單供下一頁 checkGhostCoupon 驗證
+                sessionStorage.setItem("intended_coupons", JSON.stringify(finalIntendedNames));
+                betterCouponFound = totalMax > totalCurrent;
 
-                const changeBtn = wrapper.querySelector('.js-changeCouponBtn, .changeCouponBtn');
-                if (changeBtn) {
-                    console.log(`[${TAB_ID}] Found change button. Clicking it now!`);
-                    changeBtn.click();
+                if (betterCouponFound) {
+                    logEvent("MATCH", `Found HIGHER: ¥${totalMax} (was ¥${totalCurrent})`, "success");
+                    // 觸發通知 (假設你已有 notifyDiscord 函數)
+                    if (typeof notifyDiscord === 'function') notifyDiscord(totalCurrent, totalMax);
 
-                    let attempts = 0;
-                    const evalInterval = setInterval(() => {
-                        attempts++;
-                        console.log(`[${TAB_ID}] Polling attempt ${attempts}...`);
-
-                        const selects = document.querySelectorAll('select[name="discountCouponListInfoValue"]');
-
-                        if (selects.length > 0) {
-                            const hasOptions = Array.from(selects).some(s => s.querySelector('option[data-coupon-price]'));
-
-                            if (hasOptions) {
-                                console.log(`[${TAB_ID}] Options found! Stopping poll and running comparison.`);
-                                clearInterval(evalInterval);
-
-                                let betterCouponFound = false;
-
-                                selects.forEach((select, index) => {
-                                    let highestAvailable = 0;
-                                    const options = select.querySelectorAll('option[data-coupon-price]');
-
-                                    options.forEach(opt => {
-                                        const val = parseInt(opt.getAttribute('data-coupon-price'), 10) || 0;
-                                        if (val > highestAvailable) highestAvailable = val;
-                                    });
-
-                                    const currentPrice = savedPrices[index] || 0;
-                                    let comparisonText = highestAvailable > currentPrice ? "HIGHER" : (highestAvailable === currentPrice ? "SAME" : "LOWER");
-
-                                    if (highestAvailable > currentPrice) {
-                                        betterCouponFound = true;
-                                        const currentAmt = currentPrice;
-                                        const highestAmt = highestAvailable;
-                                    }
-
-                                    console.log(`[${TAB_ID}] Slot ${index + 1}: Current (${currentPrice}) vs Highest (${highestAvailable}) => [${comparisonText}]`);
-                                    logEvent("COMPARE", `Slot ${index + 1}: Cur ${currentPrice} vs Max ${highestAvailable} [${comparisonText}]`);
-                                });
-
-                                renderLogs(); // 強制即時更新 UI 面板
-                                keepAlive();
-
-                                if (betterCouponFound) {
-                                    console.log(`[${TAB_ID}] Higher coupon found! Triggering title flash.`);
-                                    // --- Discord 通知專用函數 ---
-                                    async function notifyDiscord(currentAmt, highestAmt) {
-                                        const DISCORD_URL = "https://discordapp.com/api/webhooks/1484590933965148351/v8aoGzclXnRQcGXdaYSYJZdjnrBch9U-FUATf9-P9xWjo95H-1BG-uiNxfpn9PLzyLgi";
-
-                                        const payload = {
-                                            "content": "@everyone 🚨 發現更高金額 Coupon！",
-                                            "username": "Jalan Assistant",
-                                            "avatar_url": "https://www.jalan.net/favicon.ico",
-                                            embeds: [{
-                                                title: "🚨 發現高額 Coupon！ (Jalan Assistant)",
-                                                color: 5763719, // 綠色 (Discord 成功色)
-                                                fields: [
-                                                    { name: "Current (原本)", value: `¥ ${currentAmt}`, inline: true },
-                                                    { name: "Highest (最高)", value: `¥ ${highestAmt}`, inline: true },
-                                                    { name: "Tab ID", value: TAB_ID, inline: true },
-                                                    { name: "Target URL", value: sessionStorage.getItem("jalan_last_valid_url") || "Unknown" }
-                                                ],
-                                                timestamp: new Date().toISOString()
-                                            }]
-                                        };
-
-                                        try {
-                                            await fetch(DISCORD_URL, {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify(payload)
-                                            });
-                                            console.log("Discord Alert Sent Successfully!");
-                                        } catch (err) {
-                                            console.error("Discord Alert Error:", err);
-                                        }
-                                    }
-                                    notifyDiscord(currentAmt, highestAmt);
-                                    const originalTitle = document.title;
-                                    let flashState = false;
-                                    setInterval(() => {
-                                        document.title = flashState ? "🚨 HIGHER COUPON! 🚨" : "    HIGHER COUPON!    ";
-                                        flashState = !flashState;
-                                    }, 500);
-                                }
-                                else {
-                                    // 2. 全部都是 SAME (或 LOWER)：1秒後執行 F5 強制刷新
-                                    console.log(`[${TAB_ID}] All SAME. Triggering F5 reload in 60s...`);
-                                    logEvent("RELOAD", "All same, refreshing in "+ 60+ "s" , "warn");
-
-                                    setTimeout(() => {
-                                        // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
-                                        localStorage.setItem("jalan_batch_open_time", Date.now().toString());
-                                        window.location.reload();
-                                    }, 1000*15);
-                                }
-                            }
-                        }
-
-                        if (attempts > 20) {
-                            console.log(`[${TAB_ID}] Polling timed out after 10 seconds. Giving up.`);
-                            clearInterval(evalInterval);
-                            logEvent("COUPON ERROR", "Dropdown options failed to load in time.");
-                            renderLogs(); // 更新 UI
-                        }
-                    }, 500);
+                    // 自動執行 Next
+                    setTimeout(() => {
+                        console.log(`[${TAB_ID}] Executing executeJalanNext...`);
+                        executeJalanNext();
+                    }, 800);
                 } else {
-                    console.log(`[${TAB_ID}] ERROR: Change button not found!`);
-                    logEvent("COUPON ERROR", "Change button not found.");
-                    renderLogs(); // 更新 UI
+                    logEvent("SAME", `Price same (¥${totalCurrent}). Refresh in 15s...`, "info");
+                    setTimeout(() => window.location.reload(), 15000);
                 }
             }
-        }
+            if (attempts > 20) clearInterval(evalInterval);
+        }, 500);
+    }
+}
 
         // --- Page D: Global Theme Schedule Extractor ---
         if (currentUrl.includes("theme")) {
@@ -1486,27 +1486,44 @@ function editduplicatenext() {
         if (currentUrl.includes("uww3201init.do") || (currentUrl.includes("yadNo=") && currentUrl.includes("planCd="))) {
             addDirectBookingButton();
         }
-        if (currentUrl.includes("uwp5100/uww5106next.do")) {
-            const fullyBookedText = "先着予約数に達した";
-            const isFullyBooked = document.body && document.body.innerText.includes(fullyBookedText);
+if (currentUrl.includes("uwp5100/uww5106next.do")) {
+    console.log(`[${TAB_ID}] 最終確認頁：執行安全性檢查...`);
 
-            if (isFullyBooked) {
-                console.log(`[${TAB_ID}] ⚠️ Coupon limit reached! Retrying (F5) in 5s...`);
-                logEvent("LIMIT REACHED", "Retrying in 5s...", "warn");
+    // --- A. 檢查是否滿額 (Fully Booked / Limit Reached) ---
+    const fullyBookedText = "先着予約数に達した";
+    const isFullyBooked = document.body && document.body.innerText.includes(fullyBookedText);
 
-                // 5秒後強制刷新頁面 (F5)
-                setTimeout(() => {
-                    window.location.reload();
-                }, 5000);
+    if (isFullyBooked) {
+        console.log(`[${TAB_ID}] ⚠️ Coupon 剛剛滿額！5秒後自動刷新重試 (F5)...`);
+        logEvent("LIMIT REACHED", "Coupon full, retrying in 5s...", "warn");
 
-                // UI 提示
-                const statusEl = document.getElementById('loop-status');
-                if (statusEl) {
-                    statusEl.innerText = "Status: ⏳ FULLY BOOKED - RETRYING IN 5S";
-                    statusEl.style.color = "#fd7e14";
-                }
-            }
+        // UI 狀態更新
+        const statusEl = document.getElementById('loop-status');
+        if (statusEl) {
+            statusEl.innerText = "Status: ⏳ FULLY BOOKED - RETRYING IN 5S";
+            statusEl.style.color = "#fd7e14";
         }
+
+        setTimeout(() => {
+            window.location.reload();
+        }, 5000);
+
+        return; // 滿額就唔好再行落去
+    }
+
+    // --- B. 執行名稱驗證 (防止 Ghost Coupon) ---
+    // 檢查 sessionStorage 入面紀錄嘅名單係咪真係出現喺呢一頁
+    const isReal = checkGhostCoupon();
+
+    if (isReal) {
+        // --- C. 驗證通過，執行最終提交 ---
+        console.log(`[${TAB_ID}] ✅ 驗證通過，準備執行 confirmbookingdetail...`);
+        confirmbookingdetail();
+    } else {
+        // 驗證失敗 (Ghosted)，checkGhostCoupon 內部會自動 handle 跳轉返 URL Lock
+        console.log(`[${TAB_ID}] 🚨 偵測到死 Coupon (名稱不符)，執行退回重試。`);
+    }
+}
 
         if (currentUrl.includes("uww5001init.do")) {
             selectbookingdetail(() => {
