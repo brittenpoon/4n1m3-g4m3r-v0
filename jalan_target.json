@@ -51,6 +51,15 @@
       "nights": 1,
       "adult_num": 4,
       "room_num": 1,
+      "room_type": "◇禁煙◇サウナ付・キッズルーム☆アニマル☆【2名～4名利用】",
+      "target_price": 29568-8000
+    },
+    {
+      "hotel_name": "ホテルエリアワン帯広（HOTEL AREAONE）",
+      "checkin_date": "2026/06/03",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
       "room_type": "◇禁煙◇★サウナ付★60平米☆ベッド4～6台＜最大8名宿泊ＯＫ＞",
       "target_price": 23328
     },
