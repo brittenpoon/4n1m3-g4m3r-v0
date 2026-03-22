@@ -1,1 +1,112 @@
-
+{
+  "target_list": [
+    {
+      "hotel_name": "アパホテル＆リゾート〈札幌〉",
+      "checkin_date": "2026/06/08",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "フォース 禁煙室",
+      "target_price": 21000
+    },
+    {
+      "hotel_name": "小樽朝里クラッセホテル",
+      "checkin_date": "2026/06/07",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "ローフロア・デラックストリプル(洋室又は和洋室お任せ)",
+      "target_price": 19648
+    },
+    {
+      "hotel_name": "湯元　ホロホロ山荘",
+      "checkin_date": "2026/06/06",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "【禁煙】ゴロゴロ和室12畳（布団6枚が楽に敷ける広さ）",
+      "target_price": 32200
+    },
+    {
+      "hotel_name": "第一滝本館",
+      "checkin_date": "2026/06/05",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "スタンダード【南館】和室（26㎡/10畳）",
+      "target_price": 28840
+    },
+    {
+      "hotel_name": "うらかわ優駿ビレッジAERU(アエル)",
+      "checkin_date": "2026/06/04",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "【禁煙】スタンダードツイン（バス・トイレ付）",
+      "target_price": 26541
+    },
+    {
+      "hotel_name": "ホテルエリアワン帯広（HOTEL AREAONE）",
+      "checkin_date": "2026/06/03",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "◇禁煙◇★サウナ付★60平米☆ベッド4～6台＜最大8名宿泊ＯＫ＞",
+      "target_price": 23328
+    },
+    {
+      "hotel_name": "川湯観光ホテル",
+      "checkin_date": "2026/06/02",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 2,
+      "room_type": "【和室】12畳／最大6名／禁煙",
+      "target_price": 37508
+    },
+    {
+      "hotel_name": "ホテル知床",
+      "checkin_date": "2026/06/01",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "【禁煙】館・部屋タイプ指定なし【和室又は洋室又は和洋室】",
+      "target_price": 40960
+    },
+    {
+      "hotel_name": "美白の湯宿　大江本家",
+      "checkin_date": "2026/05/31",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 2,
+      "room_type": "【静山閣】又は【聴水閣】和室８畳/ユニットバス【禁煙】",
+      "target_price": 45888
+    },
+    {
+      "hotel_name": "湯元ホテル山水　美肌の湯",
+      "checkin_date": "2026/05/31",
+      "nights": 1,
+      "adult_num": 2,
+      "room_num": 1,
+      "room_type": "ツインルーム【禁煙】",
+      "target_price": 17500
+    },
+    {
+      "hotel_name": "湯元ホテル山水　美肌の湯",
+      "checkin_date": "2026/05/31",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 2,
+      "room_type": "ツインルーム【禁煙】",
+      "target_price": 35000
+    },
+    {
+      "hotel_name": "A-GATE HOTEL 旭川",
+      "checkin_date": "2026/05/30",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "◆スイート-個室サウナ付-◆＜キッチン付＞【80平米／禁煙】",
+      "target_price": 12260
+    }
+  ]
+}
