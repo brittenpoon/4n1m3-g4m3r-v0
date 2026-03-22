@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      4.0
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -95,7 +95,6 @@
   // --- 0.5 Infinite Watcher Logic (0.1s interval) ---
 
   const currentUrl = window.location.href;
-  const isLoginPage = currentUrl.includes("jit6001Login.do");
   const isErrorPage = currentUrl.includes("error");
 
 // --- 0.5 Infinite Watcher (3.3 Multi-Message Detection) ---
@@ -116,7 +115,9 @@
             "該当ページが存在しません",               // 頁面不存在 (404 類)
             "セッションがタイムアウトしました",       // Session Timeout
             "アクセスが集中しています",                // Server Busy
-            "Hmmm… can't reach this page"
+            "Hmmm… can't reach this page",
+            "ご予約に必要な情報が不足しています。",
+            "先着予約数に達した、または予約可能期間を超えた等の理由により、選択されたクーポンはご利用いただけなくなりました。現時点でご利用可能なクーポンがある場合は、再度選択してください。"
         ];
 
         // 檢查頁面內容是否包含任一錯誤訊息
@@ -240,7 +241,6 @@
 
     function initApp() {
         createUI();
-        handleAutoLogin();
         checkPageSpecifics();
         renderLogs();
         updateScheduleUI();
@@ -288,13 +288,13 @@ window.addEventListener('storage', (e) => {
 
         container.innerHTML = `
             <style>
-                #jalan-main-panel { background: #fff; border: 2px solid #ff6600; border-radius: 8px; width: 260px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); overflow: hidden; }
+                #jalan-main-panel { background: #fff; border: 2px solid #ff6600; border-radius: 8px; width: 300px; height: 400px; overflow-y: auto; flex-direction: column; box-shadow: 0 4px 15px rgba(0,0,0,0.3); overflow-x: hidden; }
                 .j-section { padding: 10px; border-bottom: 1px solid #eee; }
                 .j-btn { cursor: pointer; background: #ff6600; color: #fff; border: none; padding: 5px; border-radius: 3px; font-size: 11px; width: 100%; margin-top: 5px; }
                 .j-input { width: 100%; font-size: 11px; margin-bottom: 4px; border: 1px solid #ccc; padding: 3px; box-sizing: border-box; }
                 #jalan-minimized { display: none; background: #ff6600; color: white; width: 40px; height: 40px; border-radius: 50%; text-align: center; line-height: 40px; cursor: pointer; font-size: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
                 .log-entry { font-size: 10px; margin-bottom: 5px; word-break: break-all; line-height: 1.3; border-bottom: 1px dotted #ccc; padding-bottom: 4px; }
-                #jalan-log-list, #jalan-schedule-list { max-height: 120px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 5px; }
+                #jalan-log-list, #jalan-schedule-list { height: 80px; overflow-y: auto; background: #f9f9f9; border: 1px solid #ddd; padding: 5px; }
             </style>
 
             <div id="jalan-main-panel">
@@ -325,6 +325,19 @@ window.addEventListener('storage', (e) => {
                     </div>
                     <div id="loop-status" style="font-size: 10px; margin-top: 5px; text-align:center; font-weight:bold;">Status: Ready</div>
                 </div>
+                <div class="j-section" id="batch-actions" style="display:none;">
+                    <b style="font-size: 11px;">RESERVATION TOOLS</b>
+                    <div id="wrapper-open-all" style="display:none;">
+                        <button id="btn-open-all" class="j-btn" style="background: #007bff;">Open All 予約変更</button>
+                    </div>
+                </div>
+                <div class="j-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <b style="font-size: 11px;">HISTORY</b>
+                        <span id="clear-logs" style="font-size: 10px; color: #007bff; cursor: pointer; text-decoration: underline;">Clear</span>
+                    </div>
+                    <div id="jalan-log-list"></div>
+                </div>
                 <div class="j-section">
                     <b style="font-size: 11px;">10 DAYS SCHEDULE</b>
                     <div id="jalan-schedule-container" style="font-size: 10px; margin-top: 5px; background: #fffde7; padding: 5px; border: 1px solid #ffe082; border-radius: 3px;">
@@ -332,28 +345,6 @@ window.addEventListener('storage', (e) => {
                         <div id="j-countdown-timer" style="color:#dc3545; font-size:14px; font-weight:bold; margin: 2px 0;">--d --h --m --s</div>
                         <div id="jalan-schedule-list" style="margin-top: 5px; border-top: 1px dotted #ccc; padding-top: 3px;"></div>
                     </div>
-                </div>
-
-                <div class="j-section" id="batch-actions" style="display:none;">
-                    <b style="font-size: 11px;">RESERVATION TOOLS</b>
-                    <div id="wrapper-open-all" style="display:none;">
-                        <button id="btn-open-all" class="j-btn" style="background: #007bff;">Open All 予約変更</button>
-                    </div>
-                </div>
-
-                <div class="j-section" id="auth-section" style="display: ${isLoginPage ? 'block' : 'none'};">
-                    <b style="font-size: 11px;">CREDENTIALS</b>
-                    <input type="text" id="db-user" class="j-input" placeholder="Email">
-                    <input type="password" id="db-pass" class="j-input" placeholder="Password">
-                    <button id="save-auth" class="j-btn">Save Login</button>
-                </div>
-
-                <div class="j-section">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                        <b style="font-size: 11px;">HISTORY</b>
-                        <span id="clear-logs" style="font-size: 10px; color: #007bff; cursor: pointer; text-decoration: underline;">Clear</span>
-                    </div>
-                    <div id="jalan-log-list"></div>
                 </div>
             </div>
             <div id="jalan-minimized" style="background: ${isErrorPage ? '#dc3545' : '#ff6600'};">☰</div>
@@ -401,7 +392,6 @@ window.addEventListener('storage', (e) => {
             localStorage.setItem("jalan_cmd_stop_all", Date.now().toString());
             document.getElementById('loop-status').innerText = "Status: Stopped";
         };
-        if (isLoginPage) { document.getElementById('save-auth').onclick = saveAuth; loadAuthToUI(); }
     }
 
     // --- 2.8 Schedule Countdown UI ---
@@ -859,165 +849,261 @@ function addDirectBookingButton() {
         wrap.appendChild(btn);
     }
 
-function selectbookingdetail() {
+function selectbookingdetail(onComplete) {
     let attempts = 0;
-    const maxAttempts = 10; // 500ms 一次，10 次即係 5 秒
+    const maxAttempts = 15; // 延長至 7.5 秒，確保慢速網路也能完成
 
     const interval = setInterval(() => {
         try {
             attempts++;
-            console.log(`正在嘗試自動填表... (第 ${attempts} 次)`);
+            console.log(`[${TAB_ID}] 正在自動填表... (第 ${attempts} 次)`);
 
-            // 1. 處理彈窗 (用文字定位)
-            const allButtons = Array.from(document.querySelectorAll('button'));
-            const continueButton = allButtons.find(btn => btn.textContent.trim() === '予約を続ける');
+            // --- 1. 處理彈窗 (預約繼續按鈕) ---
+            const continueButton = Array.from(document.querySelectorAll('button'))
+                                        .find(btn => btn.textContent.trim() === '予約を続ける');
             if (continueButton) {
                 continueButton.click();
-                // 撳咗之後唔好即刻 Stop，俾下一次 Loop 嚟填表
-                return;
+                return; // 點擊後等待下一次 Loop 填表
             }
 
-            // 2. 檢查關鍵元素是否存在 (用男人人數 Select 嚟做指標)
+            // --- 2. 執行填表邏輯 ---
             const manSelect0 = document.querySelector('select[name="rsvInfoList[0].adultManNum"]');
-            if (!manSelect0) {
-                if (attempts >= maxAttempts) clearInterval(interval);
-                return; // 仲未見到表單，跳去下一次 Loop
-            }
+            if (manSelect0) {
+                const roomCount = document.querySelectorAll('select[name$=".adultManNum"]').length;
+                const setVal = (name, val) => {
+                    const el = document.querySelector(`select[name="${name}"]`);
+                    if (el) {
+                        const exists = Array.from(el.options).some(o => o.value === String(val));
+                        el.value = exists ? String(val) : el.options[el.options.length - 1].value;
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                };
 
-            // --- 開始填表邏輯 ---
-
-            // 偵測房數
-            const roomCount = document.querySelectorAll('select[name$=".adultManNum"]').length;
-
-            const setVal = (name, val) => {
-                const el = document.querySelector(`select[name="${name}"]`);
-                if (el) {
-                    const exists = Array.from(el.options).some(o => o.value === String(val));
-                    el.value = exists ? String(val) : el.options[el.options.length - 1].value;
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                // 填寫人數、時間、支付方式
+                if (roomCount === 1) {
+                    const maxMan = Math.max(...Array.from(manSelect0.options).map(o => parseInt(o.value) || 0));
+                    if (maxMan >= 3) { setVal('rsvInfoList[0].adultManNum', 3); setVal('rsvInfoList[0].adultWomanNum', 1); }
+                    else { setVal('rsvInfoList[0].adultManNum', 1); setVal('rsvInfoList[0].adultWomanNum', 1); }
+                } else if (roomCount >= 2) {
+                    setVal('rsvInfoList[0].adultManNum', 1); setVal('rsvInfoList[0].adultWomanNum', 1);
+                    setVal('rsvInfoList[1].adultManNum', 2); setVal('rsvInfoList[1].adultWomanNum', 0);
                 }
-            };
 
-            // 執行不同 Case
-            if (roomCount === 1) {
-                const maxMan = Math.max(...Array.from(manSelect0.options).map(o => parseInt(o.value) || 0));
-                if (maxMan >= 3) {
-                    setVal('rsvInfoList[0].adultManNum', 3);
-                    setVal('rsvInfoList[0].adultWomanNum', 1);
-                } else {
-                    setVal('rsvInfoList[0].adultManNum', 1);
-                    setVal('rsvInfoList[0].adultWomanNum', 1);
-                }
-            } else if (roomCount >= 2) {
-                setVal('rsvInfoList[0].adultManNum', 1);
-                setVal('rsvInfoList[0].adultWomanNum', 1);
-                setVal('rsvInfoList[1].adultManNum', 2);
-                setVal('rsvInfoList[1].adultWomanNum', 0);
+                const checkin = document.querySelector('select[name="checkinTime"]');
+                if (checkin) { checkin.value = "18:00"; checkin.dispatchEvent(new Event('change', { bubbles: true })); }
+
+                const repay = document.querySelector('textarea[name="repay"]');
+                if (repay) { repay.value = "."; repay.dispatchEvent(new Event('input', { bubbles: true })); }
+
+                const localPay = document.querySelector('input[name="localPayCardFlg"][value="0"]');
+                if (localPay) { localPay.checked = true; localPay.click(); }
             }
 
-            // 其他通用項
-            const checkin = document.querySelector('select[name="checkinTime"]');
-            if (checkin) {
-                checkin.value = "18:00";
-                checkin.dispatchEvent(new Event('change', { bubbles: true }));
+            // --- 3. 核心檢查：是否已經準備好提交？ ---
+            const hasError = document.body.innerText.includes("未入力の必須項目があります");
+            const confirmBtn = document.querySelector('button[aria-label="reservation button"]');
+
+            // 如果按鈕出現且沒有錯誤紅字，代表填表完成
+            if (!hasError && confirmBtn) {
+                console.log(`[${TAB_ID}] ✅ 自動填表完成且無錯誤！`);
+                clearInterval(interval);
+                if (onComplete) onComplete(); // 觸發下一步：比對價格
             }
 
-            const repay = document.querySelector('textarea[name="repay"]');
-            if (repay) {
-                repay.value = ".";
-                repay.dispatchEvent(new Event('input', { bubbles: true }));
+            if (attempts >= maxAttempts) {
+                console.log(`[${TAB_ID}] 填表逾時，停止嘗試。`);
+                clearInterval(interval);
             }
-
-            const localPay = document.querySelector('input[name="localPayCardFlg"][value="0"]');
-            if (localPay) {
-                localPay.checked = true;
-                localPay.click();
-            }
-
-            // 如果行到呢度都無 Error，代表填表完成，可以停咗個 Interval
-            console.log("自動填表完成！");
-            clearInterval(interval);
 
         } catch (e) {
-            console.error("嘗試填表時出錯:", e);
-            if (attempts >= maxAttempts) clearInterval(interval);
+            console.error("填表執行出錯:", e);
         }
-    }, 500); // 每 0.5 秒跑一次
+    }, 500);
+}
+
+async function checkAndConfirmBooking() {
+    const jsonUrl = "https://raw.githubusercontent.com/brittenpoon/4n1m3-g4m3r-v0/refs/heads/main/jalan_target.json";
+
+    try {
+        const response = await fetch(jsonUrl + "?t=" + Date.now());
+        const data = await response.json();
+        const targets = data.target_list;
+
+        // --- 1. 抓取頁面數據 (使用 XPath 避免 Random Class 影響) ---
+        const getValByLabel = (label) => {
+            const el = document.evaluate(
+                `//dt[contains(text(),'${label}')]/following-sibling::dd`,
+                document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+            ).singleNodeValue;
+            return el ? el.innerText.trim() : "";
+        };
+
+        const pageHotelName = document.querySelector('p.CbALFsHFZyJ9C2wPIzMP')?.innerText.trim();
+        const pageStay = getValByLabel("宿泊日");   // "2026年6月8日から1泊"
+        const pageMember = getValByLabel("人数室数"); // "大人4名 1部屋"
+        const pageRoom = getValByLabel("部屋");     // "フォース 禁煙室"
+
+        const priceText = document.querySelector('.tBwmC2bvTZhQy1UQ0Pw2 span')?.innerText.replace(/,/g, '');
+        const currentPrice = parseInt(priceText);
+
+        if (!pageHotelName || isNaN(currentPrice)) {
+            console.log("[Jalan Helper] 數據抓取失敗，5秒後重試...");
+            setTimeout(() => window.location.reload(), 5000);
+            return;
+        }
+
+        // --- 2. 尋找對應 JSON 目標並比對 ---
+        const target = targets.find(t => {
+            // 日期比對：將 "2026年6月8日" 轉為 "2026/06/08" 或 "2026/6/8"
+            const dateFromPage = pageStay.split('日')[0].replace(/年|月/g, '/');
+            const formattedTargetDate = t.checkin_date.replace(/\/0/g, '/'); // 統一不補零比對
+
+            return pageHotelName === t.hotel_name &&
+                   (dateFromPage === formattedTargetDate || dateFromPage === t.checkin_date) &&
+                   pageStay.includes(`${t.nights}泊`) &&
+                   pageMember.includes(`大人${t.adult_num}名`) &&
+                   pageMember.includes(`${t.room_num}部屋`) &&
+                   pageRoom === t.room_type; // 嚴格比對房型文字
+        });
+
+        if (!target) {
+            logEvent("CHECK", "找不到匹配的目標或房型不符，停止自動操作。", "warn");
+            return;
+        }
+
+        // --- 3. 價格邏輯判斷 ---
+        if (currentPrice < target.target_price) {
+            logEvent("MATCH", `價格達標: ${currentPrice} < ${target.target_price}。執行預約！`, "success");
+            const confirmBtn = document.querySelector('button[aria-label="reservation button"]');
+            if (confirmBtn && !confirmBtn.disabled) {
+                confirmBtn.click();
+            } else {
+                logEvent("ERROR", "按鈕仍為 Disabled 狀態，可能填表未完成。", "error");
+            }
+        } else if (currentPrice === target.target_price) {
+            logEvent("EQUAL", `價格不變 (${currentPrice})，15秒後重新整理...`, "info");
+            setTimeout(() => window.location.reload(), 15000);
+        } else {
+            logEvent("HIGHER", `價格過高 (${currentPrice} > ${target.target_price})，5秒後快速重試...`, "warn");
+            setTimeout(() => window.location.reload(), 1000);
+        }
+
+    } catch (e) {
+        logEvent("ERROR", "JSON 讀取失敗，5秒後重試。");
+        setTimeout(() => window.location.reload(), 5000);
+    }
 }
 
 function confirmbookingdetail() {
     let attempts = 0;
-    const maxAttempts = 10; // 5秒內嘗試 (每 500ms 一次)
+    const maxAttempts = 20;
 
     const interval = setInterval(() => {
+        attempts++;
+
         try {
-            attempts++;
-            console.log(`正在嘗試提交預約... (第 ${attempts} 次)`);
+            if (document.readyState === 'loading') return;
 
-            // 定義目標：包含 "予約を完了する" 字眼的 <a> 標籤
-            const allLinks = Array.from(document.querySelectorAll('a.alert_button.reserve_button'));
-            const finishButton = allLinks.find(a => a.textContent.includes('予約を完了する'));
+            // 1. 定位按鈕 (同時搜尋 <a> 和 <button>)
+            // 優先尋找 class 包含 reserve_button 且文字正確的元素
+            const confirmBtn = Array.from(document.querySelectorAll('a.reserve_button, button')).find(el =>
+                el.innerText.includes('予約を完了する') || el.querySelector('.reserve_button_text')
+            );
 
-            if (finishButton) {
-                console.log("搵到確認按鈕，正在點擊...");
-                // 由於佢係 <a href="#noMove" onclick="doNext()">，直接 click() 就會觸發 doNext()
-                finishButton.click();
+            if (confirmBtn) {
+                // 2. 狀態檢查
+                const btnText = confirmBtn.innerText.trim();
+
+                // 檢查是否為「未入力」狀態
+                if (btnText.includes('未入力')) {
+                    console.log(`[${TAB_ID}] 填表未完成 (顯示: ${btnText})，等待中...`);
+                    return;
+                }
+
+                console.log(`[${TAB_ID}] ✅ 發現目標按鈕 [${btnText}]，執行提交...`);
+
+                // 3. 執行提交
+                // 方法 A: 如果是連結且有 onclick 屬性，直接執行該 JS 方法 (最保險)
+                const onclickAttr = confirmBtn.getAttribute('onclick');
+                if (onclickAttr && onclickAttr.includes('doNext')) {
+                    console.log(`[${TAB_ID}] 觸發頁面 doNext() 方法`);
+                    unsafeWindow.doNext(); // 透過 Tampermonkey 的 unsafeWindow 呼叫原生 doNext
+                } else {
+                    // 方法 B: 普通點擊
+                    confirmBtn.focus();
+                    confirmBtn.click();
+                }
 
                 clearInterval(interval);
                 return;
             }
 
             if (attempts >= maxAttempts) {
-                console.log("超過 5 秒未發現確認按鈕，停止嘗試。");
+                console.log(`[${TAB_ID}] 提交超時：找不到 [予約を完了する] 按鈕。`);
                 clearInterval(interval);
             }
         } catch (e) {
-            console.error("confirmbookingdetail 執行出錯:", e);
-            if (attempts >= maxAttempts) clearInterval(interval);
+            console.error("confirmbookingdetail error:", e);
         }
     }, 500);
 }
 
 function editduplicatenext() {
     let attempts = 0;
-    const maxAttempts = 20; // 5秒內嘗試
+    const maxAttempts = 15; // 嘗試約 7.5 秒
+    let clickCount = 0;
 
     const interval = setInterval(() => {
         try {
             attempts++;
-            console.log(`正在嘗試點擊繼續... (第 ${attempts} 次)`);
 
-            // 1. 透過圖片的 alt 屬性定位
+            // 1. 確保頁面加載完成
+            if (document.readyState === 'loading') return;
+
+            // 2. 定位按鈕：尋找 alt 為 "続ける" 的圖片
             const continueImg = document.querySelector('img[alt="続ける"]');
+            const targetLink = continueImg ? continueImg.closest('a') : null;
 
-            if (continueImg) {
-                const continueLink = continueImg.closest('a');
-                if (continueLink) {
-                    console.log("搵到「続ける」按鈕，正在點擊...");
-                    continueLink.click();
+            if (targetLink) {
+                clickCount++;
+                console.log(`[${TAB_ID}] ✅ 發現「続ける」按鈕，執行第 ${clickCount} 次觸發...`);
+
+                // 3. 執行觸發邏輯
+                const onclickAttr = targetLink.getAttribute('onclick') || "";
+
+                if (onclickAttr.includes('doNext')) {
+                    // 直接從頁面全域環境執行 doNext 方法，這是最穩定跳轉的方式
+                    const screenParam = onclickAttr.match(/'([^']+)'/)?.[1] || 'UWW5103';
+                    try {
+                        if (typeof unsafeWindow.doNext === 'function') {
+                            unsafeWindow.doNext(screenParam);
+                        } else {
+                            targetLink.click(); // 備用方案
+                        }
+                    } catch (e) {
+                        targetLink.click();
+                    }
+                } else {
+                    targetLink.click();
+                }
+
+                // 4. 自我修復：如果點擊了 5 次 (約 2.5秒) 頁面還沒跳轉，強制重新整理
+                if (clickCount >= 5) {
+                    console.log(`[${TAB_ID}] 🚨 點擊多次無反應，頁面可能凍結，執行強制刷新...`);
                     clearInterval(interval);
-
+                    window.location.reload();
+                    return;
                 }
             }
 
-            // 2. 備用方案：如果 img 定位唔到，試吓搵 onclick 包含 doNext 的連結
-            const allLinks = Array.from(document.querySelectorAll('a[onclick]'));
-            const doNextLink = allLinks.find(a => a.getAttribute('onclick').includes('doNext'));
-
-            if (doNextLink) {
-                console.log("透過 onclick 定位到繼續按鈕，正在點擊...");
-                doNextLink.click();
-                clearInterval(interval);
-                return;
-            }
-
+            // 超時處理
             if (attempts >= maxAttempts) {
-                console.log("超過 5 秒未發現繼續按鈕。");
+                console.log(`[${TAB_ID}] 嘗試超時，自動刷新重試...`);
                 clearInterval(interval);
+                window.location.reload();
             }
         } catch (e) {
-            console.error("editduplicatenext 執行出錯:", e);
-            if (attempts >= maxAttempts) clearInterval(interval);
+            console.error("editduplicatenext error:", e);
         }
     }, 500);
 }
@@ -1228,7 +1314,7 @@ function editduplicatenext() {
                                         // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
                                         localStorage.setItem("jalan_batch_open_time", Date.now().toString());
                                         window.location.reload();
-                                    }, 1000*0);
+                                    }, 1000*15);
                                 }
                             }
                         }
@@ -1397,28 +1483,6 @@ function editduplicatenext() {
             handleMasterBulkPage();
         }
 
-        // --- Page H: Login Page (Credentials only) ---
-        if (currentUrl.includes("ji/pc/jit6001Login.do")) {
-            console.log(`[${TAB_ID}] Login page: Locking UI to Credentials.`);
-
-            // Strictly control visibility
-            const sections = {
-                'auth-section': 'block',      // Show this
-                'schedule-section': 'none',   // Hide others
-                'batch-actions': 'none',
-                'history-section': 'none'
-            };
-
-            Object.keys(sections).forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.style.display = sections[id];
-            });
-
-            // Start the Auto-Login process
-            handleAutoLogin();
-            return;
-        }
-
         if (currentUrl.includes("uww3201init.do") || (currentUrl.includes("yadNo=") && currentUrl.includes("planCd="))) {
             addDirectBookingButton();
         }
@@ -1445,57 +1509,13 @@ function editduplicatenext() {
         }
 
         if (currentUrl.includes("uww5001init.do")) {
-            selectbookingdetail();
+            selectbookingdetail(() => {
+                console.log(`[${TAB_ID}] 填表狀態確認 OK，啟動 JSON 比價...`);
+                checkAndConfirmBooking();
+            });
         }
         if (currentUrl.includes("uww5050next.do")) {
-            confirmbookingdetail();
+            setTimeout(confirmbookingdetail, 500);
         }
     }
-
-    // --- 4. Auto-Login Core ---
-    function handleAutoLogin() {
-        if (!isLoginPage) return;
-
-        if (document.readyState !== 'complete') {
-            window.addEventListener('load', executeLogin);
-        } else {
-            executeLogin();
-        }
-
-        function executeLogin() {
-            const tx = db.transaction("auth", "readonly");
-            tx.objectStore("auth").get("login").onsuccess = (e) => {
-                const data = e.target.result;
-                if (data?.email && data?.pass) {
-                    const userField = document.querySelector('input[name="mainEmail"]');
-                    const passField = document.querySelector('input[name="passwd"]');
-                    const loginBtn = document.querySelector('input[name="fn_input"]');
-
-                    if (userField && passField && loginBtn) {
-                        userField.value = data.email;
-                        passField.value = data.pass;
-                        setTimeout(() => loginBtn.click(), 500);
-                    }
-                }
-            };
-        }
-    }
-
-    // --- 5. DB Helpers ---
-    function saveAuth() {
-        const email = document.getElementById('db-user').value;
-        const pass = document.getElementById('db-pass').value;
-        db.transaction("auth", "readwrite").objectStore("auth").put({ type: "login", email, pass });
-        alert("Credentials saved.");
-    }
-
-    function loadAuthToUI() {
-        db.transaction("auth", "readonly").objectStore("auth").get("login").onsuccess = (e) => {
-            if (e.target.result) {
-                document.getElementById('db-user').value = e.target.result.email;
-                document.getElementById('db-pass').value = e.target.result.pass;
-            }
-        };
-    }
-
 })();
