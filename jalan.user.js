@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.6
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -980,7 +980,7 @@ function confirmbookingdetail() {
 
 function editduplicatenext() {
     let attempts = 0;
-    const maxAttempts = 10; // 5秒內嘗試
+    const maxAttempts = 20; // 5秒內嘗試
 
     const interval = setInterval(() => {
         try {
@@ -996,7 +996,7 @@ function editduplicatenext() {
                     console.log("搵到「続ける」按鈕，正在點擊...");
                     continueLink.click();
                     clearInterval(interval);
-                    return;
+
                 }
             }
 
@@ -1228,7 +1228,7 @@ function editduplicatenext() {
                                         // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
                                         localStorage.setItem("jalan_batch_open_time", Date.now().toString());
                                         window.location.reload();
-                                    }, 1000*60);
+                                    }, 1000*0);
                                 }
                             }
                         }
