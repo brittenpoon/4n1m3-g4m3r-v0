@@ -116,6 +116,15 @@
       "room_num": 1,
       "room_type": "◆スイート-個室サウナ付-◆＜キッチン付＞【80平米／禁煙】",
       "target_price": 12260
+    },
+    {
+      "hotel_name": "A-GATE HOTEL 旭川",
+      "checkin_date": "2026/05/30",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "プライベートルーム【４名】＜禁煙＞",
+      "target_price": 18360-5000-1360
     }
   ]
 }
