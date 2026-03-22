@@ -19,6 +19,15 @@
       "target_price": 19648
     },
     {
+      "hotel_name": "小樽朝里クラッセホテル",
+      "checkin_date": "2026/06/07",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "デラックストリプルフォース（３ベット＋ソファベット１台）",
+      "target_price": 19648
+    },
+    {
       "hotel_name": "湯元　ホロホロ山荘",
       "checkin_date": "2026/06/06",
       "nights": 1,
