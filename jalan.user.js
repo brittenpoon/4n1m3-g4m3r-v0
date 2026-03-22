@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      4.2
+// @version      4.3
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -140,6 +140,11 @@
         if (isError && !isRedirecting) {
             isRedirecting = true;
             console.log(`[${TAB_ID}] 🚨 ERROR DETECTED: ${nowUrl}. Redirecting to Locked URL...`);
+
+            if (lockedUrl.includes("uww5103init.do")) {
+                console.log(`[${TAB_ID}] Target is Init page. Refreshing batch time for Auto-Next.`);
+                localStorage.setItem("jalan_batch_open_time", Date.now().toString());
+            }
 
             // 停止所有當前加載
             window.stop();
@@ -1300,7 +1305,7 @@ if (currentUrl.includes("uwp5100/uww5103next.do")) {
     if (!wrapper) {
         logEvent("COUPON", "No applicable coupon wrapper found.");
         // 如果連選單都沒出現，視為無優惠券，執行 15s 刷新
-        setTimeout(() => window.location.reload(), 15000);
+        setTimeout(() => window.location.reload(), 1000);
     } else {
         const changeBtn = wrapper.querySelector('.js-changeCouponBtn, .changeCouponBtn');
         if (changeBtn) changeBtn.click();
@@ -1361,7 +1366,7 @@ if (currentUrl.includes("uwp5100/uww5103next.do")) {
                     }, 800);
                 } else {
                     logEvent("SAME", `Price same (¥${totalCurrent}). Refresh in 15s...`, "info");
-                    setTimeout(() => window.location.reload(), 15000);
+                    setTimeout(() => window.location.reload(), 1000);
                 }
             }
             if (attempts > 20) clearInterval(evalInterval);
@@ -1529,8 +1534,11 @@ if (currentUrl.includes("uwp5100/uww5106next.do")) {
     const isFullyBooked = document.body && document.body.innerText.includes(fullyBookedText);
 
     if (isFullyBooked) {
-        console.log(`[${TAB_ID}] ⚠️ Coupon 剛剛滿額！5秒後自動刷新重試 (F5)...`);
-        logEvent("LIMIT REACHED", "Coupon full, retrying in 5s...", "warn");
+        let retryCount = parseInt(sessionStorage.getItem("jalan_fully_booked_retry_count") || "0", 10);
+        retryCount++;
+        sessionStorage.setItem("jalan_fully_booked_retry_count", retryCount.toString());
+
+        console.log(`[${TAB_ID}] ⚠️ Coupon 滿額 (第 ${retryCount} 次重試)`);
 
         // UI 狀態更新
         const statusEl = document.getElementById('loop-status');
@@ -1539,12 +1547,27 @@ if (currentUrl.includes("uwp5100/uww5106next.do")) {
             statusEl.style.color = "#fd7e14";
         }
 
-        setTimeout(() => {
-            window.location.reload();
-        }, 5000);
+        if (retryCount <= 60) {
+            // --- 階段 1：首 60 次執行 F5 快速刷新 (1秒間隔) ---
+            logEvent("LIMIT REACHED", `Retry #${retryCount}: Quick F5 in 1s`, "warn");
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        } else {
+            // --- 階段 2：超過 60 次，重置計數器並跳回起點 ---
+            logEvent("LIMIT REACHED", "60 retries failed. Jumping back to Lock URL...", "error");
+            localStorage.setItem("jalan_batch_open_time", Date.now().toString());
+            sessionStorage.setItem("jalan_fully_booked_retry_count", "0"); // 重置計數器
+
+            const lockedUrl = sessionStorage.getItem("jalan_last_valid_url");
+            setTimeout(() => {
+                window.location.replace(lockedUrl);
+            }, 1000);
+        }
 
         return; // 滿額就唔好再行落去
     }
+    sessionStorage.setItem("jalan_fully_booked_retry_count", "0");
 
     // --- B. 執行名稱驗證 (防止 Ghost Coupon) ---
     // 檢查 sessionStorage 入面紀錄嘅名單係咪真係出現喺呢一頁
