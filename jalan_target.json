@@ -41,9 +41,18 @@
       "checkin_date": "2026/06/04",
       "nights": 1,
       "adult_num": 4,
-      "room_num": 1,
+      "room_num": 2,
       "room_type": "【禁煙】スタンダードツイン（バス・トイレ付）",
       "target_price": 26541
+    },
+    {
+      "hotel_name": "うらかわ優駿ビレッジAERU(アエル)",
+      "checkin_date": "2026/06/04",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "【禁煙】6名様まで可・コネクティングルーム（バス・トイレ付）",
+      "target_price": 30420
     },
     {
       "hotel_name": "ホテルエリアワン帯広（HOTEL AREAONE）",
