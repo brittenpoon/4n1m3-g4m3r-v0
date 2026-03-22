@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.0
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -994,7 +994,7 @@ async function checkAndConfirmBooking() {
     }
 }
 
-function confirmbookingdetail() {
+function confirmbookingdetail5050() {
     let attempts = 0;
     const maxAttempts = 20;
 
@@ -1004,55 +1004,34 @@ function confirmbookingdetail() {
         try {
             if (document.readyState === 'loading') return;
 
-            // --- 強化定位：涵蓋 <a>, <button>, 以及 <img> (針對 nx01) ---
-            // 優先尋找有 doNext 的元素，或包含特定文字/Alt 的元素
-            const confirmBtn = Array.from(document.querySelectorAll('a, button, img')).find(el => {
-                const onclick = el.getAttribute('onclick') || "";
-                const text = el.innerText || "";
-                const alt = el.getAttribute('alt') || "";
-                
-                // 命中條件：
-                // 1. 直接有 doNext()
-                // 2. 文字包含 "予約を完了する"
-                // 3. 圖片 Alt 包含 "確定" 或 "完了"
-                return onclick.includes('doNext') || 
-                       text.includes('予約を完了する') || 
-                       alt.includes('確定') || 
-                       alt.includes('完了');
-            });
+            // 1. 定位按鈕 (同時搜尋 <a> 和 <button>)
+            // 優先尋找 class 包含 reserve_button 且文字正確的元素
+            const confirmBtn = Array.from(document.querySelectorAll('a.reserve_button, button')).find(el =>
+                el.innerText.includes('予約を完了する') || el.querySelector('.reserve_button_text')
+            );
 
             if (confirmBtn) {
-                // --- 狀態檢查 (針對預約頁的「未入力」) ---
+                // 2. 狀態檢查
                 const btnText = confirmBtn.innerText.trim();
-                const btnAlt = confirmBtn.getAttribute('alt') || "";
-                
+
+                // 檢查是否為「未入力」狀態
                 if (btnText.includes('未入力')) {
                     console.log(`[${TAB_ID}] 填表未完成 (顯示: ${btnText})，等待中...`);
                     return;
                 }
 
-                console.log(`[${TAB_ID}] ✅ 發現提交目標 [${btnText || btnAlt}]，執行點擊...`);
+                console.log(`[${TAB_ID}] ✅ 發現目標按鈕 [${btnText}]，執行提交...`);
 
-                // --- 執行提交 ---
-                const onclickAttr = confirmBtn.getAttribute('onclick') || "";
-                
-                // 優先執行 doNext()
-                if (onclickAttr.includes('doNext')) {
-                    console.log(`[${TAB_ID}] 觸發 unsafeWindow.doNext()`);
-                    if (typeof unsafeWindow.doNext === 'function') {
-                        // 針對特定頁面可能需要傳參數，通常 doNext() 唔帶參數亦可
-                        unsafeWindow.doNext(); 
-                    } else {
-                        confirmBtn.click();
-                    }
+                // 3. 執行提交
+                // 方法 A: 如果是連結且有 onclick 屬性，直接執行該 JS 方法 (最保險)
+                const onclickAttr = confirmBtn.getAttribute('onclick');
+                if (onclickAttr && onclickAttr.includes('doNext')) {
+                    console.log(`[${TAB_ID}] 觸發頁面 doNext() 方法`);
+                    unsafeWindow.doNext(); // 透過 Tampermonkey 的 unsafeWindow 呼叫原生 doNext
                 } else {
-                    // 針對普通按鈕
-                    if (confirmBtn.tagName === 'IMG') {
-                        confirmBtn.closest('a')?.click() || confirmBtn.click();
-                    } else {
-                        confirmBtn.focus();
-                        confirmBtn.click();
-                    }
+                    // 方法 B: 普通點擊
+                    confirmBtn.focus();
+                    confirmBtn.click();
                 }
 
                 clearInterval(interval);
@@ -1060,7 +1039,63 @@ function confirmbookingdetail() {
             }
 
             if (attempts >= maxAttempts) {
-                console.log(`[${TAB_ID}] 提交超時：找不到 [確定/予約完了] 相關按鈕。`);
+                console.log(`[${TAB_ID}] 提交超時：找不到 [予約を完了する] 按鈕。`);
+                clearInterval(interval);
+            }
+        } catch (e) {
+            console.error("confirmbookingdetail error:", e);
+        }
+    }, 500);
+}
+
+
+
+function confirmbookingdetail5106() {
+    let attempts = 0;
+    const maxAttempts = 20;
+
+    const interval = setInterval(() => {
+        attempts++;
+        if (document.readyState === 'loading') return;
+
+        try {
+            // --- 強化後的定位邏輯 ---
+            // 1. 搵有 doNext 嘅 <a>
+            // 2. 搵有 doNext 嘅 <img> (針對你提供嘅 HTML)
+            // 3. 搵文字包含 "予約を完了する" 嘅按鈕
+            let targetEl = document.querySelector('a[onclick*="doNext"], img[onclick*="doNext"]');
+
+            if (!targetEl) {
+                targetEl = Array.from(document.querySelectorAll('button, a, img')).find(el => {
+                    const alt = el.getAttribute('alt') || "";
+                    const text = el.innerText || "";
+                    return alt.includes('確定') || alt.includes('完了') || text.includes('予約を完了する');
+                });
+            }
+
+            if (targetEl) {
+                console.log(`[${TAB_ID}] ✅ 發現提交目標: ${targetEl.tagName}`);
+
+                // 執行點擊或 doNext
+                const onclickAttr = targetEl.getAttribute('onclick') || "";
+                if (onclickAttr.includes('doNext')) {
+                    // 直接執行 doNext 係最穩陣嘅做法
+                    if (typeof unsafeWindow.doNext === 'function') {
+                        console.log(`[${TAB_ID}] 觸發 unsafeWindow.doNext()`);
+                        unsafeWindow.doNext();
+                    } else {
+                        targetEl.click();
+                    }
+                } else {
+                    targetEl.click();
+                }
+
+                clearInterval(interval);
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                console.log(`[${TAB_ID}] 提交超時，找不到按鈕。`);
                 clearInterval(interval);
             }
         } catch (e) {
@@ -1518,7 +1553,7 @@ if (currentUrl.includes("uwp5100/uww5106next.do")) {
     if (isReal) {
         // --- C. 驗證通過，執行最終提交 ---
         console.log(`[${TAB_ID}] ✅ 驗證通過，準備執行 confirmbookingdetail...`);
-        confirmbookingdetail();
+        confirmbookingdetail5106();
     } else {
         // 驗證失敗 (Ghosted)，checkGhostCoupon 內部會自動 handle 跳轉返 URL Lock
         console.log(`[${TAB_ID}] 🚨 偵測到死 Coupon (名稱不符)，執行退回重試。`);
@@ -1532,7 +1567,7 @@ if (currentUrl.includes("uwp5100/uww5106next.do")) {
             });
         }
         if (currentUrl.includes("uww5050next.do")) {
-            setTimeout(confirmbookingdetail, 500);
+            setTimeout(confirmbookingdetail5050, 500);
         }
     }
 })();
