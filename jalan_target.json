@@ -82,13 +82,22 @@
       "target_price": 40960
     },
     {
+      "hotel_name": "ホテル知床",
+      "checkin_date": "2026/06/01",
+      "nights": 1,
+      "adult_num": 4,
+      "room_num": 1,
+      "room_type": "【禁煙】和洋室【シャチの海遊館】",
+      "target_price": 42000
+    },
+    {
       "hotel_name": "KIKI知床　ナチュラルリゾート",
       "checkin_date": "2026/06/01",
       "nights": 1,
       "adult_num": 4,
       "room_num": 1,
       "room_type": "【お任せ／指定不可】4名/21㎡以上",
-      "target_price": 50000
+      "target_price": 42000
     },
     {
       "hotel_name": "美白の湯宿　大江本家",
