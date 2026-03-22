@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      3.5
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -246,6 +246,33 @@
         updateScheduleUI();
     }
 
+window.addEventListener('storage', (e) => {
+    // 監聽 REFRESH ALL 指令
+    if (e.key === "jalan_cmd_refresh_all" && e.newValue) {
+        const loopActive = sessionStorage.getItem("jalan_loop_active") === "true";
+        const lockedUrl = sessionStorage.getItem("jalan_last_valid_url");
+
+        // 核心判斷：只有當前 Tab 正在運行 Loop 時才響應刷新
+        if (loopActive && lockedUrl) {
+            console.log(`[${TAB_ID}] 收到全域刷新指令，執行 Reload...`);
+
+            // 為了避免所有 Tab 同時請求導致 Server 封鎖，可以加一個極小的隨機延遲 (0-300ms)
+            setTimeout(() => {
+                window.location.reload();
+            }, Math.random() * 300);
+        } else {
+            console.log(`[${TAB_ID}] 收到刷新指令，但此 Tab 未啟動 Loop，忽略。`);
+        }
+    }
+
+    // 監聽 STOP ALL 指令 (如有需要)
+    if (e.key === "jalan_cmd_stop_all") {
+        sessionStorage.removeItem("jalan_loop_active");
+        const statusEl = document.getElementById('loop-status');
+        if (statusEl) statusEl.innerText = "Status: STOPPED";
+    }
+});
+
 // --- 2. UI Creation (已優化刷新結構) ---
     function createUI() {
         if (document.getElementById('jalan-helper-root')) return;
@@ -289,9 +316,12 @@
                            style="width:100%; font-size: 11px; margin-top:5px; border:1px solid #ffe082; padding:5px; box-sizing:border-box; background: #fff;"
                            placeholder="Click to paste Booking URL..."
                            value="${sessionStorage.getItem("jalan_last_valid_url") || ""}">
-                    <div style="display:flex; gap:2px; margin-top:3px;">
-                        <button id="btn-set-go" class="j-btn" style="background: #28a745; flex:2; font-weight:bold;">SET & GO</button>
-                        <button id="btn-stop-loop" class="j-btn" style="background: #6c757d; flex:1;">STOP</button>
+                    <div style="display:flex; flex-direction:column; gap:3px; margin-top:3px;">
+                        <div style="display:flex; gap:2px;">
+                            <button id="btn-set-go" class="j-btn" style="background: #28a745; flex:2; font-weight:bold;">SET & GO</button>
+                            <button id="btn-stop-loop" class="j-btn" style="background: #6c757d; flex:1;">STOP</button>
+                        </div>
+                        <button id="btn-refresh-all" class="j-btn" style="background: #007bff; font-weight:bold; margin-top:0;">REFRESH ALL ACTIVE TABS</button>
                     </div>
                     <div id="loop-status" style="font-size: 10px; margin-top: 5px; text-align:center; font-weight:bold;">Status: Ready</div>
                 </div>
@@ -354,19 +384,22 @@
                 sessionStorage.setItem("jalan_last_valid_url", inputUrl);
                 sessionStorage.setItem("jalan_loop_active", "true");
                 logEvent("LOOP START", "Target Locked: " + inputUrl, "success");
+                isRedirecting = true;
                 window.location.href = inputUrl;
-            } else {
-                alert("Invalid URL!");
             }
         };
-        document.getElementById('btn-set-go').onclick = () => {
-            const inputUrl = document.getElementById('manual-locked-url').value.trim();
-            if (inputUrl.startsWith('http')) {
-                sessionStorage.setItem("jalan_last_valid_url", inputUrl);
-                sessionStorage.setItem("jalan_loop_active", "true");
-                isRedirecting = true; // 撳掣嗰刻都鎖一鎖
-                window.location.href = inputUrl;
+        document.getElementById('btn-refresh-all').onclick = () => {
+            console.log(`[${TAB_ID}] 发出全域刷新指令...`);
+            localStorage.setItem("jalan_cmd_refresh_all", Date.now().toString());
+            const loopActive = sessionStorage.getItem("jalan_loop_active") === "true";
+            if (loopActive) {
+                window.location.reload();
             }
+        };
+        document.getElementById('btn-stop-loop').onclick = () => {
+            sessionStorage.removeItem("jalan_loop_active");
+            localStorage.setItem("jalan_cmd_stop_all", Date.now().toString());
+            document.getElementById('loop-status').innerText = "Status: Stopped";
         };
         if (isLoginPage) { document.getElementById('save-auth').onclick = saveAuth; loadAuthToUI(); }
     }
@@ -1195,7 +1228,7 @@ function editduplicatenext() {
                                         // 使用 location.reload(true) 模擬 F5，強制從伺服器抓取
                                         localStorage.setItem("jalan_batch_open_time", Date.now().toString());
                                         window.location.reload();
-                                    }, 1000*5);
+                                    }, 1000*60);
                                 }
                             }
                         }
