@@ -18,7 +18,7 @@
 (function() {
     'use strict';
 
-    const global_cooldown = 60000;
+    const global_cooldown = 60000*3;
     const getSafeDelay = (presetDelay) => {
         return Math.max(global_cooldown, presetDelay);
     };
@@ -360,7 +360,7 @@
                         <button id="btn-refresh-all" class="j-btn" style="background: #007bff; font-weight:bold; margin-top:0;">REFRESH ALL ACTIVE TABS</button>
                         <button id="btn-open-settings" class="j-btn" style="background: #6f42c1; font-weight:bold; margin-top:3px;">⚙️ SETTINGS & TARGETS</button>
                     </div>
-                    <div id="loop-status" style="font-size: 10px; margin-top: 5px; text-align:center; font-weight:bold;">Status: Ready</div>
+                    <div id="loop-status" style="font-size: 10px; margin-top: 5px; text-align:center; font-weight:bold;">Loop Active Status: ${sessionStorage.getItem("jalan_loop_active")}</div>
                 </div>
                 <div class="j-section" id="batch-actions" style="display:none;">
                     <b style="font-size: 11px;">RESERVATION TOOLS</b>
@@ -938,13 +938,20 @@
 
     function sendDiscordHeartbeat(rsvNo, hotelName, message) {
         // 每個 rsvNo 使用獨立的 Message ID 紀錄，避免不同分頁互相覆蓋
+        console.log("sending Discord");
         const storageKey = `discord_msg_id_${rsvNo}`;
         const isBetter = message.includes("BETTER");
         const lastMsgId = isBetter ? null : localStorage.getItem(storageKey);
         const now = new Date().toLocaleString('zh-HK', { hour12: false });
+       let type = "General"; // 預設值
+        if (rsvNo.length === 8) {
+            type = "Coupon";      // 真正的預約編號 (8位)
+        } else if (rsvNo.length > 8) {
+            type = "Reservation"; // 模擬 ID (SIM_...) 通常會超過 8 位
+        }
 
         const payload = {
-            content: `${isBetter ? '🎉 **[BETTER VALUE FOUND!]**' : '💓 **Jalan 監控中 (Heartbeat)**'}\n` +
+            content: `${isBetter ? `🎉 **[BETTER VALUE FOUND!] ${type}**` : `💓 **Jalan 監控中 ${type}**`}\n` +
                      `**最後活躍**: \`${now}\`\n` +
                      `**預約編號**: \`${rsvNo}\`\n` +
                      `**監控酒店**: ${hotelName}\n` +
@@ -961,6 +968,7 @@
                 headers: { "Content-Type": "application/json" },
                 data: JSON.stringify(payload),
                 onload: function(res) {
+                    console.log(res);
                     if (res.status === 404) {
                         localStorage.removeItem(storageKey); // 訊息被刪了，下次發新的
                     }
@@ -974,6 +982,7 @@
                 headers: { "Content-Type": "application/json" },
                 data: JSON.stringify(payload),
                 onload: function(res) {
+                    console.log(res);
                     if (res.status === 200 && !isBetter) {
                         const response = JSON.parse(res.responseText);
                         localStorage.setItem(storageKey, response.id);
@@ -983,23 +992,23 @@
         }
     }
     function generateSimulatedRsvId(url) {
-        try {
-            const params = new URLSearchParams(url.split('?')[1]);
-            const temp1 = params.get('TEMP1') || "";
-            // TEMP1 入面係用 + 同 # 分隔嘅，例如 yadNo+316006#planCd+00706691
-            const yadNo = temp1.match(/yadNo\+([^#&]+)/)?.[1] || "0";
-            const planCd = temp1.match(/planCd\+([^#&]+)/)?.[1] || "0";
-            const roomType = temp1.match(/roomTypeCd\+([^#&]+)/)?.[1] || "0";
-            const stayDate = (temp1.match(/stayYear\+([^#&]+)/)?.[1] || "") +
-                             (temp1.match(/stayMonth\+([^#&]+)/)?.[1] || "") +
-                             (temp1.match(/stayDay\+([^#&]+)/)?.[1] || "");
+        const params = new URLSearchParams(url.split('?')[1]);
+        const temp1 = params.get('TEMP1') || "";
 
-            if (yadNo === "0") return "TEMP_" + TAB_ID; // 萬一解析失敗，用 Tab ID 頂住
+        const yadNo = temp1.match(/yadNo\+([^#&]+)/)?.[1] || "0";
+        const planCd = temp1.match(/planCd\+([^#&]+)/)?.[1] || "0";
+        const roomType = temp1.match(/roomTypeCd\+([^#&]+)/)?.[1] || "0";
+        const roomCount = temp1.match(/roomCount\+([^#&]+)/)?.[1] || "0";
 
-            return `SIM_${yadNo}_${planCd}_${roomType}_${stayDate}`;
-        } catch (e) {
-            return "TEMP_" + TAB_ID;
-        }
+        // 強制補零：5月變成 05，7日變成 07
+        const year = temp1.match(/stayYear\+([^#&]+)/)?.[1] || "";
+        const month = (temp1.match(/stayMonth\+([^#&]+)/)?.[1] || "").padStart(2, '0');
+        const day = (temp1.match(/stayDay\+([^#&]+)/)?.[1] || "").padStart(2, '0');
+
+        const stayDate = year + month + day;
+
+        // 加入下劃線分隔，確保 ID 結構清晰
+        return `SIM_${yadNo}_${planCd}_${roomType}_${roomCount}_${stayDate}`;
     }
     // --- Page F 專屬邏輯 ---
     function handleCouponBulkPage() {
