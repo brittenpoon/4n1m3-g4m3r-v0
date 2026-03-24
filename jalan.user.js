@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      5.0
+// @version      5.2
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -11,15 +11,19 @@
 // @grant        GM_xmlhttpRequest
 // @connect      githubusercontent.com
 // @connect      github.com
+// @connect      discordapp.com
+// @connect      discord.com
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const global_cooldown = 0;
+    const global_cooldown = 60000;
     const getSafeDelay = (presetDelay) => {
         return Math.max(global_cooldown, presetDelay);
     };
+
+    const DISCORD_WEBHOOK = "https://discordapp.com/api/webhooks/1484590933965148351/v8aoGzclXnRQcGXdaYSYJZdjnrBch9U-FUATf9-P9xWjo95H-1BG-uiNxfpn9PLzyLgi";
 
     // --- 0. Unique Tab ID Generation ---
     const TAB_ID = sessionStorage.getItem('JALAN_TAB_ID') || (() => {
@@ -269,7 +273,7 @@
 
     function initApp() {
         createUI();
-        checkUrlHashLock();
+        checkUrlHashLock("");
         checkPageSpecifics();
         renderLogs();
         updateScheduleUI();
@@ -866,47 +870,134 @@
         };
     }
 
-    function checkUrlHashLock() {
+    function checkUrlHashLock(message) {
         const hash = window.location.hash;
         if (hash.includes("#j_lock=")) {
             const urlToLock = decodeURIComponent(hash.split("#j_lock=")[1]);
 
             if (urlToLock && urlToLock.startsWith('http')) {
                 console.log(`[${TAB_ID}] 偵測到 Hash Lock 指令，自動設定 URL Lock...`);
-
-                // 寫入當前分頁的 sessionStorage
                 sessionStorage.setItem("jalan_last_valid_url", urlToLock);
                 sessionStorage.setItem("jalan_loop_active", "true");
 
-                // 清除 Hash 避免重新整理時重複觸發 (Optional)
-                // history.replaceState(null, "", window.location.pathname + window.location.search);
+                let rsvNo = "Unknown";
+                if (currentUrl.includes("uwp5100/uww5103init.do")) {
+                    try {
+                        // 使用 URL 物件解析傳入的網址
+                        const urlObj = new URL(urlToLock);
+                        rsvNo = urlObj.searchParams.get("rsvNo") || "Unknown";
+                    } catch (e) {
+                        // 如果 URL 解析失敗，嘗試用傳統 split 方式攞
+                        const match = urlToLock.match(/[?&]rsvNo=([^&]+)/);
+                        if (match) rsvNo = match[1];
+                    }
+
+                    const hotelName = document.querySelector('img[alt="宿泊施設"]')
+                      ?.closest('td')
+                      ?.nextElementSibling
+                      ?.querySelector('.s12_30')
+                      ?.innerText.trim();
+
+                    sessionStorage.setItem("jalan_current_rsvNo", rsvNo);
+                    sessionStorage.setItem("jalan_current_hotelName", hotelName);
+                }
+                if (currentUrl.includes("uwp5000/uww5001init.do")) {
+                    rsvNo = generateSimulatedRsvId(urlToLock);
+                    const pageHotelName = document.querySelector('p.CbALFsHFZyJ9C2wPIzMP')?.innerText.trim();
+
+                    sessionStorage.setItem("jalan_current_rsvNo", rsvNo);
+                    sessionStorage.setItem("jalan_current_hotelName", pageHotelName);
+                }
 
                 logEvent("AUTO LOCK", "URL Locked from Setting Page", "success");
             }
+        }
+        const loopActive = sessionStorage.getItem("jalan_loop_active") === "true";
+        if (loopActive) {
             // --- Page B: Modification Input Page (Auto Click '次へ') ---
             if (currentUrl.includes("uwp5100/uww5103init.do")) {
-                /*const hashMatch = window.location.hash.match(/j_lock=([^&]+)/);
-                if (hashMatch) {
-                    const inputUrl = decodeURIComponent(hashMatch[1]);
-                    sessionStorage.setItem("jalan_last_valid_url", inputUrl);
-                    sessionStorage.setItem("jalan_loop_active", "true");
-                    logEvent("AUTO LOCK", "Tab locked to: " + inputUrl, "success");
+                //const rsvNo = sessionStorage.getItem("jalan_current_rsvNo");
+                //const hotelName = sessionStorage.getItem("jalan_current_hotelName");
+                //sendDiscordHeartbeat(rsvNo, hotelName);
+                const nextImg = document.querySelector('img[alt="次へ"], img[name="nx01"]');
+                if (nextImg) {
+                    console.log(`[${TAB_ID}] Within active batch window. Auto-clicking '次へ'...`);
+                    setTimeout(() => {
+                        nextImg.click();
+                    }, 800);
+                }
+            }
+            if ((currentUrl.includes("uwp5100/uww5103next.do") || currentUrl.includes("uwp5000/uww5001init.do")) && message.trim() !== "") {
+                const rsvNo = sessionStorage.getItem("jalan_current_rsvNo");
+                const hotelName = sessionStorage.getItem("jalan_current_hotelName");
+                sendDiscordHeartbeat(rsvNo, hotelName, message);
+            }
+            keepAlive();
+        }
+    }
 
-                    history.replaceState(null, "", window.location.href.split('#')[0]);
-                }*/
+    function sendDiscordHeartbeat(rsvNo, hotelName, message) {
+        // 每個 rsvNo 使用獨立的 Message ID 紀錄，避免不同分頁互相覆蓋
+        const storageKey = `discord_msg_id_${rsvNo}`;
+        const isBetter = message.includes("BETTER");
+        const lastMsgId = isBetter ? null : localStorage.getItem(storageKey);
+        const now = new Date().toLocaleString('zh-HK', { hour12: false });
 
-                const loopActive = sessionStorage.getItem("jalan_loop_active") === "true";
-                if (loopActive) {
-                    const nextImg = document.querySelector('img[alt="次へ"], img[name="nx01"]');
-                    if (nextImg) {
-                        console.log(`[${TAB_ID}] Within active batch window. Auto-clicking '次へ'...`);
-                        setTimeout(() => {
-                            nextImg.click();
-                        }, 800);
+        const payload = {
+            content: `${isBetter ? '🎉 **[BETTER VALUE FOUND!]**' : '💓 **Jalan 監控中 (Heartbeat)**'}\n` +
+                     `**最後活躍**: \`${now}\`\n` +
+                     `**預約編號**: \`${rsvNo}\`\n` +
+                     `**監控酒店**: ${hotelName}\n` +
+                     `**Tab ID**: ${TAB_ID}\n` +
+                     `**Message**: ${message}\n` +
+                     `----------------------------------`
+        };
+
+        if (lastMsgId) {
+            // 方法 A: 編輯現有訊息 (PATCH)
+            GM_xmlhttpRequest({
+                method: "PATCH",
+                url: `${DISCORD_WEBHOOK}/messages/${lastMsgId}`,
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify(payload),
+                onload: function(res) {
+                    if (res.status === 404) {
+                        localStorage.removeItem(storageKey); // 訊息被刪了，下次發新的
                     }
                 }
-                keepAlive();
-            }
+            });
+        } else {
+            // 方法 B: 發送新訊息 (POST) - 必須加 ?wait=true 才能拿回 ID
+            GM_xmlhttpRequest({
+                method: "POST",
+                url: `${DISCORD_WEBHOOK}?wait=true`,
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify(payload),
+                onload: function(res) {
+                    if (res.status === 200 && !isBetter) {
+                        const response = JSON.parse(res.responseText);
+                        localStorage.setItem(storageKey, response.id);
+                    }
+                }
+            });
+        }
+    }
+    function generateSimulatedRsvId(url) {
+        try {
+            const params = new URLSearchParams(url.split('?')[1]);
+            const temp1 = params.get('TEMP1') || "";
+            // TEMP1 入面係用 + 同 # 分隔嘅，例如 yadNo+316006#planCd+00706691
+            const yadNo = temp1.match(/yadNo\+([^#&]+)/)?.[1] || "0";
+            const planCd = temp1.match(/planCd\+([^#&]+)/)?.[1] || "0";
+            const stayDate = (temp1.match(/stayYear\+([^#&]+)/)?.[1] || "") +
+                             (temp1.match(/stayMonth\+([^#&]+)/)?.[1] || "") +
+                             (temp1.match(/stayDay\+([^#&]+)/)?.[1] || "");
+
+            if (yadNo === "0") return "TEMP_" + TAB_ID; // 萬一解析失敗，用 Tab ID 頂住
+
+            return `SIM_${yadNo}_${planCd}_${stayDate}`;
+        } catch (e) {
+            return "TEMP_" + TAB_ID;
         }
     }
     // --- Page F 專屬邏輯 ---
@@ -1395,6 +1486,7 @@
         try {
             const localData = localStorage.getItem('jalan_local_targets');
             let targets = [];
+            let message = "";
 
             if (localData) {
                 const parsed = JSON.parse(localData);
@@ -1404,7 +1496,9 @@
             // --- 2. 如果無數據，提示用戶去 Setting 頁面更新 ---
             if (targets.length === 0) {
                 console.log(`[${TAB_ID}] 本地無數據，請先到 Setting 頁面同步 GitHub。`);
-                logEvent("CHECK", "本地目標清單為空，請在 Setting 頁面點擊「Update from GitHub」同步數據", "warn");
+                message = "本地目標清單為空，請在 Setting 頁面點擊「Update from GitHub」同步數據";
+                checkUrlHashLock(message);
+                logEvent("CHECK", message, "warn");
                 return; // 終止執行
             }
 
@@ -1446,13 +1540,17 @@
             });
 
             if (!target) {
-                logEvent("CHECK", "找不到匹配的目標或房型不符，停止自動操作。", "warn");
+                message = "找不到匹配的目標或房型不符，停止自動操作。";
+                checkUrlHashLock(message);
+                logEvent("CHECK", message, "warn");
                 return;
             }
 
             // --- 3. 價格邏輯判斷 ---
             if (currentPrice < target.target_price) {
-                logEvent("MATCH", `價格達標: ${currentPrice} < ${target.target_price}。執行預約！`, "success");
+                message = `[BETTER] 價格達標: ${currentPrice} < ${target.target_price}。執行預約！`;
+                checkUrlHashLock(message);
+                logEvent("MATCH", message, "success");
                 const confirmBtn = document.querySelector('button[aria-label="reservation button"]');
                 if (confirmBtn && !confirmBtn.disabled) {
                     confirmBtn.click();
@@ -1460,10 +1558,14 @@
                     logEvent("ERROR", "按鈕仍為 Disabled 狀態，可能填表未完成。", "error");
                 }
             } else if (currentPrice === target.target_price) {
-                logEvent("EQUAL", `價格不變 (${currentPrice})，15秒後重新整理...`, "info");
+                message = `價格不變 (${currentPrice})`;
+                checkUrlHashLock(message);
+                logEvent("EQUAL", message, "info");
                 setTimeout(() => window.location.reload(), getSafeDelay(15000));
             } else {
-                logEvent("HIGHER", `價格過高 (${currentPrice} > ${target.target_price})，5秒後快速重試...`, "warn");
+                message = `價格過高 (${currentPrice} > ${target.target_price})`;
+                checkUrlHashLock(message);
+                logEvent("HIGHER", message, "warn");
                 setTimeout(() => window.location.reload(), getSafeDelay(1000));
             }
 
@@ -1736,7 +1838,7 @@
                     btn.innerText = `Opening... (${current}/${total})`;
                     renderLogs();
 
-                }, 1000);
+                }, 0);
             };
             keepAlive();
             logEvent("RELOAD", "Refreshing in " + 60 + "s", "warn");
@@ -1806,17 +1908,18 @@
                         betterCouponFound = totalMax > totalCurrent;
 
                         if (betterCouponFound) {
-                            logEvent("MATCH", `Found HIGHER: ¥${totalMax} (was ¥${totalCurrent})`, "success");
-                            // 觸發通知 (假設你已有 notifyDiscord 函數)
-                            if (typeof notifyDiscord === 'function') notifyDiscord(totalCurrent, totalMax);
-
+                            const message = `[BETTER] Found hogher value coupon ¥${totalMax} (was ¥${totalCurrent})`;
+                            logEvent("MATCH", message, "success");
+                            checkUrlHashLock(message);
                             // 自動執行 Next
                             setTimeout(() => {
                                 console.log(`[${TAB_ID}] Executing executeJalanNext...`);
                                 executeJalanNext();
                             }, 800);
                         } else {
-                            logEvent("SAME", `Price same (¥${totalCurrent}). Refresh in 15s...`, "info");
+                            const message = `Same coupon amount (¥${totalCurrent})`;
+                            logEvent("SAME", message, "info");
+                            checkUrlHashLock(message);
                             setTimeout(() => window.location.reload(), getSafeDelay(1000));
                         }
                     }
