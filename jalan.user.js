@@ -989,13 +989,14 @@
             // TEMP1 入面係用 + 同 # 分隔嘅，例如 yadNo+316006#planCd+00706691
             const yadNo = temp1.match(/yadNo\+([^#&]+)/)?.[1] || "0";
             const planCd = temp1.match(/planCd\+([^#&]+)/)?.[1] || "0";
+            const roomType = temp1.match(/roomTypeCd\+([^#&]+)/)?.[1] || "0";
             const stayDate = (temp1.match(/stayYear\+([^#&]+)/)?.[1] || "") +
                              (temp1.match(/stayMonth\+([^#&]+)/)?.[1] || "") +
                              (temp1.match(/stayDay\+([^#&]+)/)?.[1] || "");
 
             if (yadNo === "0") return "TEMP_" + TAB_ID; // 萬一解析失敗，用 Tab ID 頂住
 
-            return `SIM_${yadNo}_${planCd}_${stayDate}`;
+            return `SIM_${yadNo}_${planCd}_${roomType}_${stayDate}`;
         } catch (e) {
             return "TEMP_" + TAB_ID;
         }
