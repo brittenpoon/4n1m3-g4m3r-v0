@@ -18,12 +18,16 @@
 (function() {
     'use strict';
 
-    const global_cooldown = 60000*3;
+    const global_cooldown = 60000;
     const getSafeDelay = (presetDelay) => {
         return Math.max(global_cooldown, presetDelay);
     };
 
-    const DISCORD_WEBHOOK = "https://discordapp.com/api/webhooks/1484590933965148351/v8aoGzclXnRQcGXdaYSYJZdjnrBch9U-FUATf9-P9xWjo95H-1BG-uiNxfpn9PLzyLgi";
+    const global_cooldown_reservation = 60000;
+    const getSafeDelay_reservation = (presetDelay) => {
+        return Math.max(global_cooldown_reservation, presetDelay);
+    };
+    const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1486419165815505020/rswhKUsIAzRogYCq8dlIDxtu7zN2i5eGxBGL43wT5cFXM51j2nitioImOma-faoFeMgd";
 
     // --- 0. Unique Tab ID Generation ---
     const TAB_ID = sessionStorage.getItem('JALAN_TAB_ID') || (() => {
@@ -1557,7 +1561,7 @@
             }
 
             // --- 3. 價格邏輯判斷 ---
-            if (currentPrice < target.target_price) {
+            if (currentPrice <= target.target_price) {
                 message = `[BETTER] 價格達標: ${currentPrice} < ${target.target_price}。執行預約！`;
                 checkUrlHashLock(message);
                 logEvent("MATCH", message, "success");
@@ -1567,16 +1571,16 @@
                 } else {
                     logEvent("ERROR", "按鈕仍為 Disabled 狀態，可能填表未完成。", "error");
                 }
-            } else if (currentPrice === target.target_price) {
+            /*} else if (currentPrice === target.target_price) {
                 message = `價格不變 (${currentPrice})`;
                 checkUrlHashLock(message);
                 logEvent("EQUAL", message, "info");
-                setTimeout(() => window.location.reload(), getSafeDelay(15000));
+                setTimeout(() => window.location.reload(), getSafeDelay(15000));*/
             } else {
                 message = `價格過高 (${currentPrice} > ${target.target_price})`;
                 checkUrlHashLock(message);
                 logEvent("HIGHER", message, "warn");
-                setTimeout(() => window.location.reload(), getSafeDelay(1000));
+                setTimeout(() => window.location.reload(), getSafeDelay_reservation(1000));
             }
 
         } catch (e) {
