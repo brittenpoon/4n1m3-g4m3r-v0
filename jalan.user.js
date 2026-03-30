@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      5.2
+// @version      5.3
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -18,12 +18,12 @@
 (function() {
     'use strict';
 
-    const global_cooldown = 60000;
+    const global_cooldown = 30000;
     const getSafeDelay = (presetDelay) => {
         return Math.max(global_cooldown, presetDelay);
     };
 
-    const global_cooldown_reservation = 60000;
+    const global_cooldown_reservation = 30000;
     const getSafeDelay_reservation = (presetDelay) => {
         return Math.max(global_cooldown_reservation, presetDelay);
     };
@@ -947,11 +947,15 @@
         const isBetter = message.includes("BETTER");
         const lastMsgId = isBetter ? null : localStorage.getItem(storageKey);
         const now = new Date().toLocaleString('zh-HK', { hour12: false });
-       let type = "General"; // 預設值
-        if (rsvNo.length === 8) {
-            type = "Coupon";      // 真正的預約編號 (8位)
-        } else if (rsvNo.length > 8) {
-            type = "Reservation"; // 模擬 ID (SIM_...) 通常會超過 8 位
+        let type = "General"; // 預設值
+        try{
+            if (rsvNo.length === 8) {
+                type = "Coupon";      // 真正的預約編號 (8位)
+            } else if (rsvNo.length > 8) {
+                type = "Reservation"; // 模擬 ID (SIM_...) 通常會超過 8 位
+            }
+        } catch (e) {
+            type = "Reservation";
         }
 
         const payload = {
@@ -1499,9 +1503,28 @@
 
         try {
             const localData = localStorage.getItem('jalan_local_targets');
+            const localDataRaw = localStorage.getItem('jalan_local_targets');
             let targets = [];
+
+            try {
+                const parsed = localDataRaw ? JSON.parse(localDataRaw) : null;
+                // 確保 targets 一定係 Array，就算 JSON 格式錯咗或者冇 target_list 都唔會 crash
+                targets = (parsed && Array.isArray(parsed.target_list)) ? parsed.target_list : [];
+            } catch (e) {
+                console.error("JSON Parse Error", e);
+                targets = [];
+            }
+
             let message = "";
 
+            // --- 2. 檢查數據 (依家 targets.length 絕對安全) ---
+            if (targets.length === 0) {
+                console.log(`[${TAB_ID}] 本地無數據，請先到 Setting 頁面同步 GitHub。`);
+                message = "本地目標清單為空，請在 Setting 頁面點擊「Update from GitHub」同步數據";
+                checkUrlHashLock(message);
+                logEvent("CHECK", message, "warn");
+                return;
+            }
             if (localData) {
                 const parsed = JSON.parse(localData);
                 targets = parsed.target_list || [];
@@ -1585,7 +1608,8 @@
 
         } catch (e) {
             logEvent("ERROR", "JSON 讀取失敗，5秒後重試。");
-            setTimeout(() => window.location.reload(), getSafeDelay(5000));
+            console.log(e);
+
         }
     }
 
