@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      5.3
+// @version      5.4
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -18,15 +18,18 @@
 (function() {
     'use strict';
 
-    const global_cooldown = 30000;
+    const global_cooldown = 0;
     const getSafeDelay = (presetDelay) => {
         return Math.max(global_cooldown, presetDelay);
     };
 
-    const global_cooldown_reservation = 30000;
+    const global_cooldown_reservation = 0;
     const getSafeDelay_reservation = (presetDelay) => {
-        return Math.max(global_cooldown_reservation, presetDelay);
+        return Math.max(global_cooldown_reservation, 100);
     };
+
+    const coupon_cooldown = 100;
+
     const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1486419165815505020/rswhKUsIAzRogYCq8dlIDxtu7zN2i5eGxBGL43wT5cFXM51j2nitioImOma-faoFeMgd";
 
     // --- 0. Unique Tab ID Generation ---
@@ -1153,7 +1156,7 @@
             let currentBatch = batches[i]; // Use 'let' because we might modify it
             let batchSuccess = false;
             let retryCount = 0;
-            const maxRetries = 100;
+            const maxRetries = 1000;
 
             logEvent("BATCH", `Batch ${i + 1}/${batches.length} (Size: ${currentBatch.length})...`, "info");
 
@@ -1199,7 +1202,7 @@
                     if (data.result !== "0") {
                         const errorCode = data.errors?.[0]?.code || "UNKNOWN";
                         retryCount++;
-                        const delay = errorCode === 'F_MAS5033' ? 1000 : 1000;
+                        const delay = errorCode === 'F_MAS5033' ? coupon_cooldown : coupon_cooldown;
 
                         logEvent("SYS BUSY", `Batch ${i+1} Err: ${errorCode}. Retry ${retryCount}/${maxRetries} in ${delay/1000}s`, "warn");
                         await new Promise(res => setTimeout(res, delay));
@@ -1219,18 +1222,20 @@
                         });
                     }
 
-                    batchSuccess = true;
+                    //batchSuccess = true;
+                    logEvent("FINISH", "All batches processed.", "success");
+                    await new Promise(res => setTimeout(res, coupon_cooldown));
 
                 } catch (err) {
                     retryCount++;
                     logEvent("NET ERROR", `Attempt ${retryCount} failed. Waiting 5s...`, "error");
-                    await new Promise(res => setTimeout(res, 1000));
+                    await new Promise(res => setTimeout(res, coupon_cooldown));
                 }
             }
 
-            if (i < batches.length - 1) await new Promise(res => setTimeout(res, 1000));
+            if (i < batches.length - 1) await new Promise(res => setTimeout(res, coupon_cooldown));
         }
-        logEvent("FINISH", "All batches processed.", "success");
+        //logEvent("FINISH", "All batches processed.", "success");
     }
 
     // --- Page G function: Acquired Coupons List (uww7803.do) ---
