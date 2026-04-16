@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jalan Helper - Auto Next & Intent Catcher
 // @namespace    http://tampermonkey.net/
-// @version      5.4
+// @version      5.5
 // @description  Tab isolation, infinite memory, manual click recovery, and auto "Next" within 1 min of batch open
 // @author       Gemini
 // @match        *://www.jalan.net/*
@@ -1028,10 +1028,20 @@
         const scanData = () => {
             let ids = [];
             let startTime = null;
+            let isWaitingForObserver = false;
+
+            const refreshUI = (currentIds, currentStartTime) => {
+                if (currentIds.length > 0) {
+                    const uniqueIds = [...new Set(currentIds)];
+                    console.log(`[${TAB_ID}] Detected IDs:`, uniqueIds, currentStartTime);
+                    updateBulkButtonInPanel(uniqueIds, currentStartTime);
+                }
+            };
 
             // --- Layout 1: theme/coupon/general (Page F) ---
             const generalIds = Array.from(document.querySelectorAll('input.js-disCouponId')).map(i => i.value);
-            if (generalIds.length > 0) ids = generalIds;
+            const kikakuIds = Array.from(document.querySelectorAll('.js-disCouponId')).map(i => i.value);
+            ids = [...new Set([...generalIds, ...kikakuIds])];
 
             // --- Layout 2: discountCoupon/CAM... (CAM Page) ---
             if (ids.length === 0) {
@@ -1040,16 +1050,29 @@
                     const match = link.href.match(/'([^']+)'/);
                     if (match) ids.push(match[1]);
                 });
-                const td = Array.from(document.querySelectorAll('td')).find(el => el.innerText.includes('配布期間'));
-                if (td && td.nextElementSibling) {
-                    startTime = parseJalanDateString(td.nextElementSibling.innerText.split('～')[0]);
-                }
             }
 
-            // --- Layout 3: theme/coupon/kikaku (Kikaku Page) ---
-            if (ids.length === 0) {
-                const kikakuIds = Array.from(document.querySelectorAll('.js-disCouponId')).map(i => i.value);
-                if (kikakuIds.length > 0) ids = kikakuIds;
+            const targetSpan = document.querySelector('.js-acquisitionStrPeriod');
+            const td = Array.from(document.querySelectorAll('td')).find(el => el.innerText.includes('配布期間'));
+
+            if (targetSpan) {
+                if (targetSpan.innerText.trim()) {
+                    startTime = parseJalanDateString(targetSpan.innerText.trim());
+                } else {
+                    isWaitingForObserver = true;
+                    const observer = new MutationObserver(() => {
+                        const text = targetSpan.innerText.trim();
+                        if (text) {
+                            startTime = parseJalanDateString(text);
+                            observer.disconnect();
+                            console.log("Observer fixed time:", startTime);
+                            refreshUI(ids, startTime);
+                        }
+                    });
+                    observer.observe(targetSpan, { childList: true, characterData: true, subtree: true });
+                }
+            } else if (td && td.nextElementSibling) {
+                startTime = parseJalanDateString(td.nextElementSibling.innerText.split('～')[0]);
             }
 
             // --- Layout 4: Hotel Specific Coupon Page (Moved inside the logic flow) ---
@@ -1080,12 +1103,14 @@
 
             // Final Check and UI Update
             if (ids.length > 0) {
-                // Deduplicate IDs just in case
-                const uniqueIds = [...new Set(ids)];
-                console.log(`[${TAB_ID}] Detected IDs:`, uniqueIds);
-                updateBulkButtonInPanel(uniqueIds, startTime);
+                console.log(2, ids,  startTime);
+                if (!isWaitingForObserver) {
+                    console.log("Direct update (no waiting):", startTime);
+                    refreshUI(ids, startTime);
+                } else {
+                    console.log("Scan complete, but waiting for Observer to fill time...");
+                }
             } else {
-                // Retry scanning if nothing found yet
                 setTimeout(scanData, 1500);
             }
         };
@@ -1125,16 +1150,30 @@
 
         // 2. 自動調度邏輯
         if (startTime) {
-            const timeToStart = startTime - Date.now();
-            if (timeToStart > 0) {
-                logEvent("SCHEDULE", `Auto-get in ${Math.round(timeToStart/1000)}s`, "warn");
-                setTimeout(() => {
+            const timer = setInterval(() => {
+                const now = Date.now();
+                const timeToStart = startTime - now;
+                const localTimeStr = new Date(startTime).toLocaleString();
+
+                // 情況 A：仲未到時間 -> 繼續倒數
+                if (timeToStart > 0) {
+                    // 每一秒先 log 一次，廢事洗版
+                    if (Math.round(timeToStart) % 1000 < 100) {
+                        logEvent("SCHEDULE", `Auto-get in ${Math.round(timeToStart / 1000)}s (Start was: ${localTimeStr})`, "warn");
+                    }
+                }
+                // 情況 B：過咗時間，但喺 5 秒內 -> 立即執行
+                else if (timeToStart >= -5000) {
                     logEvent("AUTO TRIGGER", "Executing scheduled bulk get!", "success");
                     executeSuperBulkGet(ids);
-                }, timeToStart);
-            } else {
-                logEvent("INFO", "Distribution already started.", "info");
-            }
+                    clearInterval(timer);
+                }
+                // 情況 C：已經過咗超過 5 秒 -> 放棄執行
+                else {
+                    logEvent("INFO", `Event expired (Start was: ${localTimeStr}).`, "info");
+                    clearInterval(timer);
+                }
+            }, coupon_cooldown); // 0.1s 檢查一次
         }
     }
     // 執行一鍵領取 API
