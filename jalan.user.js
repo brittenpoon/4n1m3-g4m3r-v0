@@ -1159,7 +1159,7 @@
                 if (timeToStart > 0) {
                     // 每一秒先 log 一次，廢事洗版
                     if (Math.round(timeToStart) % 1000 < 100) {
-                        logEvent("SCHEDULE", `Auto-get in ${Math.round(timeToStart / 1000)}s (Start was: ${localTimeStr})`, "warn");
+                        logEvent("SCHEDULE", `Auto-get in ${Math.round(timeToStart / 1000)}s (${localTimeStr})`, "warn");
                     }
                 }
                 // 情況 B：過咗時間，但喺 5 秒內 -> 立即執行
@@ -1170,7 +1170,7 @@
                 }
                 // 情況 C：已經過咗超過 5 秒 -> 放棄執行
                 else {
-                    logEvent("INFO", `Event expired (Start was: ${localTimeStr}).`, "info");
+                    logEvent("INFO", `Event expired (${localTimeStr}).`, "info");
                     clearInterval(timer);
                 }
             }, coupon_cooldown); // 0.1s 檢查一次
